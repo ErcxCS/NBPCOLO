@@ -157,7 +157,8 @@ def pairwise_potential(xr, xu, dru, sigma):
     # Compute the Euclidean distance between xr and xu
     euclidean_distance = np.linalg.norm(xr - xu)
     # Compute the likelihood of dru given xr, xu, and the noise model
-    likelihood = norm.pdf(euclidean_distance - dru, scale=sigma)
+    print(euclidean_distance, dru)
+    likelihood = norm.pdf(euclidean_distance, scale=sigma)
     return likelihood
 
 from scipy.stats import gaussian_kde
@@ -190,7 +191,7 @@ def one_step_NBP(D: np.array, anchors: np.ndarray, n_particles: int, X:np.ndarra
     for r, Mr in enumerate(M): # for each node r and its particles Mr
 
         for u, Mu in enumerate(M): # for each node u and its particles Mu
-            if u in anchor_list: # If node r is anchor node, we already know its location
+            if u in anchor_list: # If node u is anchor node, we already know its location
                 continue
             # Graph represented by all nodes is a clique, so each of them are connected
             # So, each node u is a neighbor node r
@@ -427,7 +428,7 @@ D = euclidean_distances(X) + symetric_noise * 0
 # Define the points and the target point t
 area_m =5
 n_particles = 20
-n_targets = 2
+n_targets = 1
 d = 2
 x_min, x_max, y_min, y_max = 0, area_m, 0, area_m
 """ p1 = np.array([x_min, y_min])
@@ -438,35 +439,57 @@ targets = np.array([[0.1, 0.1], [1.1, 1.3], [3.4, 0.88], [1.88, 2.11], [3,3]])
 particles = np.array([p1, p2, p3, p4])
 weights=np.array([0.25, 0.25, 0.25, 0.25]) """
 
-targets = np.random.uniform(x_min, x_max, size=(n_targets, d))
+#t = np.random.uniform(x_min, x_max, size=(n_targets, d))
 rx, ry = (x_max + x_min)/2, (y_min + y_max)/2
 o = np.array([rx, ry])
 
+# Messages from Mr to Mu = m_ru
+# m_ru = m^(i)_ru(Xu)?
+particles = np.repeat(o, n_particles).reshape(n_particles, d) 
+#particles = np.random.uniform(rx - (rx/2), ry + (ry/2), size=(n_particles, d)) # Mr
+#xs = np.random.uniform(t[0] - (rx/2), t[0] + (rx/2), size=n_targets) # Mu_xs
+#ys = np.random.uniform(t[1] - (ry/2), t[1] + (ry/2), size=n_targets) # Mu_ys
+#targets = np.column_stack([xs, ys]) # Mu
+
+#targets = t
+#targets = targets.reshape(1, -1)
+targets = np.random.uniform(x_min, x_max, size=(n_targets, d))
+#print(f"shape: {targets.shape}, t:{t}, targets:{targets}")
+
+d_ru = np.linalg.norm(o - targets[0])
+v = np.random.normal(0, 2, size=n_particles)*0
 thetas = np.linspace(0, 2*np.pi, n_particles)
 #thetas = np.random.uniform(0, 2*np.pi, size=n_particles)
-particles = np.repeat(o, n_particles).reshape(n_particles, d)
-v = np.random.normal(0, 2, size=n_particles)*0
-cos_u = (rx + v) * np.cos(thetas)
-sin_u = (ry + v) * np.sin(thetas)
-spread_particles = particles + np.column_stack([cos_u, sin_u])
-weights = np.ones(n_particles) / n_particles
+cos_u = (d_ru + v) * np.cos(thetas)
+sin_u = (d_ru + v) * np.sin(thetas)
+spread_particles = particles + np.column_stack([cos_u, sin_u]) # x_ru
+
+weights = np.ones(n_particles) / n_particles # Wr weights
 #weights = np.random.uniform(0, 1, size=n_particles)
 #weights /= weights.sum()
+#weights /= 1 # w_ru Wr / m^(i-1)_ur(Xr == Mr), because init messages are 1
+
 # Perform KDE with the 'silverman' bandwidth method
+# Constructing kde from Mr particles for Mu particles
 kde = gaussian_kde(spread_particles.T, bw_method='silverman', weights=weights)
 
-# Evaluate the KDE at point t
-m = kde(targets.T)
+# Evaluate the KDE for Mu particles
+m = kde(targets.T) # messages for Mu particles? from kde of Mr, x_ru
 
 # Calculate the pairwise potentials considering the measured distance
 measured_distance = np.linalg.norm(targets - o, axis=1)
-
+print(measured_distance)
 pp = np.array([pairwise_potential(xr=xr, xu=xu, dru=measured_distance[r], sigma=np.std(spread_particles)*kde.factor) for r, xr in enumerate(targets) for xu in spread_particles])
 pp = pp.reshape(targets.shape[0], spread_particles.shape[0])
-
 # Normalize the sum of the pairwise potentials by the prior belief
-prior_belief = 1/(area_m + 1)
-pp *= weights * prior_belief
+prior_belief = 1/(area_m * area_m)
+print(pp)
+a_max, a_min = np.argmax(pp), np.argmin(pp)
+print(f"max_index: {a_max}, val: {pp.ravel()[a_max]}\nmin_index: {a_min}, val: {pp.ravel()[a_min]}")
+#pp /= n_particles
+pp *= weights
+pp *= prior_belief
+print(prior_belief, weights)
 sum_of_particles = np.sum(pp, axis=1)
 
 # Output the results
@@ -479,6 +502,10 @@ print(f"Delta: {np.sum((m - sum_of_particles)**2)}")
 plt.scatter(targets[:, 0], targets[:, 1])
 plt.scatter(spread_particles[:, 0], spread_particles[:, 1])
 plt.scatter(o[0], o[1])
+#plt.xlim((x_min, x_max))
+#plt.ylim((y_min, y_max))
+for i, particle in enumerate(spread_particles):
+    plt.annotate(str(i), particle)
 plt.show()
 
 """ Z = np.reshape(m, X.shape)
