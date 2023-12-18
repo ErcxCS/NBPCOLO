@@ -211,13 +211,16 @@ def one_step_NBP(D: np.array, anchors: np.ndarray, n_particles: int, X:np.ndarra
                     cos_u = (D[r, u] + v) * np.cos(thetas)
                     sin_u = (D[r, u] + v) * np.sin(thetas)
                     x_ru = Mr + np.column_stack([cos_u, sin_u])
+
                     w_ru = weights[r] / messages[r, u]
-                    print(weights[r])
                     w_ru /= w_ru.sum()
+                    #v_ru = np.power(k*n_particles, -1/3) * np.cov(x_ru)
+                    #print(v_ru)
                     
                     kde = gaussian_kde(x_ru.T, weights=w_ru, bw_method='silverman')
                     Xu_new[u, r] = kde.resample(new_n_particles).T
                     m_ru[r, u] = kde
+                    
         
         mask = np.all(Xu_new[n_anchors:, n_anchors:] == np.ones((new_n_particles, 2)), axis=(2, 3))
         Xu_new = Xu_new[n_anchors:, n_anchors:][~mask]
@@ -229,18 +232,26 @@ def one_step_NBP(D: np.array, anchors: np.ndarray, n_particles: int, X:np.ndarra
             for u, Mu in enumerate(M):
                 if u != v:
                     if u in anchor_list:
-                        mru = np.array([pairwise_potential(xr, Mu[0], D[u, v], 1) for xr in Xu_new[v]])
-                        new_messages[v, u] = mru
+                        m_uv = np.array([pairwise_potential(xr, Mu[0], D[u, v], 1) for xr in Xu_new[v]])
                     else:
-                        new_messages[v, u] = m_ru[u, v](Xu_new[v].T)
-            
+                        m_uv = m_ru[u, v](Xu_new[v].T)
+
+                    m_uv /= m_uv.sum()
+                    new_messages[v, u] = m_uv
+                    
             proposal_product = np.prod(new_messages[v, [i for i in range(n_samples) if i != v]], axis=0)
             proposal_sum = np.sum(new_messages[v, [idx for idx in list(range(n_samples)) if idx not in (anchor_list + [v])]], axis=0)
+
+            #proposal_product /= proposal_product.sum()
+            #proposal_sum /= proposal_sum.sum()
+            #print(f"product: {proposal_product}\nsum: {proposal_sum}")
             W_v = proposal_product / proposal_sum
             W_v /= W_v.sum()
             weights[v] = W_v
+            #print(W_v)
 
         messages = new_messages
+        M = Xu_new
     for i, n in enumerate(Xu_new):
         plt.scatter(n[:, 0], n[:, 1], label=f"particle of {i}")
 
@@ -452,9 +463,9 @@ def calculate_message_ur(xr: np.ndarray, Mu: np.ndarray, D: np.ndarray, r: int, 
 
 import time
 #np.random.seed(21)
-n_samples, d_dimensions = 12, 2
-m_meters = 30
-n_particles = 20
+n_samples, d_dimensions = 10, 2
+m_meters = 40
+n_particles = 8
 r_radius = 20
 n_anchors = 4
 X = generate_X_points(m_meters, n_samples, d_dimensions)
