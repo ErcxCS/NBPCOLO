@@ -195,8 +195,8 @@ def one_step_NBP(D: np.array, anchors: np.ndarray, n_particles: int, X:np.ndarra
     # messages[r, u, k] represents message node r's k particle receives from node u's all particles
     weights = beliefs / np.sum(beliefs, axis=1, keepdims=True) # weights for each nodes, particles
     # initially, all weights of particles for a node are equal and their sum is 1
-
-    for i in range(2):
+    
+    for i in range(1):
         Xu_new = np.ones((n_samples, n_samples, new_n_particles, 2)) # not like this
         m_ru = dict()
         for r, Mr in enumerate(M): # for each node r and its particles Mr
@@ -226,18 +226,38 @@ def one_step_NBP(D: np.array, anchors: np.ndarray, n_particles: int, X:np.ndarra
         Xu_new = Xu_new[n_anchors:, n_anchors:][~mask]
         Xu_new = Xu_new.reshape(n_targets, k*n_particles, 2)
         Xu_new = np.vstack([np.ones((n_anchors, k*n_particles, 2)), Xu_new])
+        Xu_new[n_anchors:] = M[:n_anchors]
+
+    
         for v, Mr, in enumerate(M):
             if v in anchor_list:
                 continue
+
+            plt.scatter(X[n_anchors:, 0], X[n_anchors:, 1], c="black")
+            plt.scatter(X[:n_anchors, 0], X[:n_anchors, 1], c="red")
+            for i, p in enumerate(X):
+                s = "r"
+                if i < n_anchors:
+                    s = "a"
+                s += str(i)
+                plt.annotate(s, p)
+
+            plt.scatter(Xu_new[v, :, 0], Xu_new[v, :, 1])
+            for i, p in enumerate(Xu_new[v]):
+                plt.annotate(f"p_{v}{i}", p)
             for u, Mu in enumerate(M):
                 if u != v:
                     if u in anchor_list:
                         m_uv = np.array([pairwise_potential(xr, Mu[0], D[u, v], 1) for xr in Xu_new[v]])
                     else:
+                        ds = m_ru[u, v].dataset.T
+                        plt.scatter(ds[:, 0], ds[:, 1], label=f"x_ru of {u, v}")
                         m_uv = m_ru[u, v](Xu_new[v].T)
 
                     m_uv /= m_uv.sum()
                     new_messages[v, u] = m_uv
+            plt.legend()
+            plt.show()
                     
             proposal_product = np.prod(new_messages[v, [i for i in range(n_samples) if i != v]], axis=0)
             proposal_sum = np.sum(new_messages[v, [idx for idx in list(range(n_samples)) if idx not in (anchor_list + [v])]], axis=0)
@@ -252,13 +272,13 @@ def one_step_NBP(D: np.array, anchors: np.ndarray, n_particles: int, X:np.ndarra
 
         messages = new_messages
         M = Xu_new
-    for i, n in enumerate(Xu_new):
+    """ for i, n in enumerate(Xu_new):
         plt.scatter(n[:, 0], n[:, 1], label=f"particle of {i}")
 
     
     plt.scatter(X[:, 0], X[:, 1], label=f"true targets")
     plt.legend()
-    plt.show()
+    plt.show() """
 
 
 
@@ -463,11 +483,11 @@ def calculate_message_ur(xr: np.ndarray, Mu: np.ndarray, D: np.ndarray, r: int, 
 
 import time
 #np.random.seed(21)
-n_samples, d_dimensions = 10, 2
-m_meters = 40
+n_samples, d_dimensions = 6, 2
+m_meters = 30
 n_particles = 8
 r_radius = 20
-n_anchors = 4
+n_anchors = 3
 X = generate_X_points(m_meters, n_samples, d_dimensions)
 
 noise = np.random.normal(0, 2, (n_samples, n_samples))
