@@ -158,8 +158,18 @@ def pairwise_potential(xr, xu, dru, sigma):
     euclidean_distance = np.linalg.norm(xr - xu)
     # Compute the likelihood of dru given xr, xu, and the noise model
 
-    likelihood = norm.pdf(dru - euclidean_distance)
+    likelihood = norm.pdf(dru - euclidean_distance, scale=sigma)
     return likelihood
+
+def silverman_factor(neff, d):
+    """Compute the Silverman factor.
+
+    Returns
+    -------
+    s : float
+        The silverman factor.
+    """
+    return np.power(neff*(d+2.0)/4.0, -1./(d+4))
 
 from scipy.stats import gaussian_kde
 import numpy as np
@@ -182,7 +192,6 @@ def one_step_NBP(D: np.array, anchors: np.ndarray, n_particles: int, X:np.ndarra
     new_n_particles = round(k * n_particles / target_neighbours)
     n_particles = (new_n_particles * target_neighbours) // k
 
-
     M, prior_beliefs, intersections = generate_particles(D, anchors, n_particles, m)
     # M: n_particles amount of particles for each nodes from their bounded boxes according to anchors
     # prior_beliefs: prior beliefs for each node. shaped (n_samples)
@@ -196,17 +205,19 @@ def one_step_NBP(D: np.array, anchors: np.ndarray, n_particles: int, X:np.ndarra
     weights = beliefs / np.sum(beliefs, axis=1, keepdims=True) # weights for each nodes, particles
     # initially, all weights of particles for a node are equal and their sum is 1
     
-    for i in range(1):
-        Xu_new = np.ones((n_samples, n_samples, new_n_particles, 2)) # not like this
+    for i in range(15):
+        M_new = np.ones((n_samples, n_samples, new_n_particles, 2)) # not like this
         m_ru = dict()
         for r, Mr in enumerate(M): # for each node r and its particles Mr
+            # r: sender
             if r in anchor_list:
                 continue
             for u, Mu in enumerate(M): # for each node u and its particles Mu
+                # u: receiver
                 if u in anchor_list:
                     continue
                 if r != u: # if u is not r
-                    v = np.random.normal(0, 1, size=n_particles)*0
+                    v = np.random.normal(0, 1, size=n_particles)*1
                     thetas = np.random.uniform(0, 2*np.pi, size=n_particles)
                     cos_u = (D[r, u] + v) * np.cos(thetas)
                     sin_u = (D[r, u] + v) * np.sin(thetas)
@@ -214,26 +225,26 @@ def one_step_NBP(D: np.array, anchors: np.ndarray, n_particles: int, X:np.ndarra
 
                     w_ru = weights[r] / messages[r, u]
                     w_ru /= w_ru.sum()
-                    #v_ru = np.power(k*n_particles, -1/3) * np.cov(x_ru)
-                    #print(v_ru)
-                    
-                    kde = gaussian_kde(x_ru.T, weights=w_ru, bw_method='silverman')
-                    Xu_new[u, r] = kde.resample(new_n_particles).T
-                    m_ru[r, u] = kde
-                    
-        
-        mask = np.all(Xu_new[n_anchors:, n_anchors:] == np.ones((new_n_particles, 2)), axis=(2, 3))
-        Xu_new = Xu_new[n_anchors:, n_anchors:][~mask]
-        Xu_new = Xu_new.reshape(n_targets, k*n_particles, 2)
-        Xu_new = np.vstack([np.ones((n_anchors, k*n_particles, 2)), Xu_new])
-        Xu_new[n_anchors:] = M[:n_anchors]
 
-    
-        for v, Mr, in enumerate(M):
-            if v in anchor_list:
+                    kde = gaussian_kde(x_ru.T, weights=w_ru, bw_method='silverman')
+
+                    m_ru[r, u] = kde
+                    samples = kde.resample(new_n_particles).T
+                    M_new[u, r] = samples
+
+
+        mask = np.all(M_new[n_anchors:, n_anchors:] == np.ones((new_n_particles, 2)), axis=(2, 3))
+        M_new = M_new[n_anchors:, n_anchors:][~mask]
+        M_new = M_new.reshape(n_targets, k*n_particles, 2)
+        M_new = np.vstack([np.ones((n_anchors, k*n_particles, 2)), M_new])
+        M_new[:n_anchors] = M[:n_anchors]
+        M_new = M
+        for u, Mr, in enumerate(M_new):
+            # v: receiver
+            if u in anchor_list:
                 continue
 
-            plt.scatter(X[n_anchors:, 0], X[n_anchors:, 1], c="black")
+            """ plt.scatter(X[n_anchors:, 0], X[n_anchors:, 1], c="black")
             plt.scatter(X[:n_anchors, 0], X[:n_anchors, 1], c="red")
             for i, p in enumerate(X):
                 s = "r"
@@ -242,37 +253,52 @@ def one_step_NBP(D: np.array, anchors: np.ndarray, n_particles: int, X:np.ndarra
                 s += str(i)
                 plt.annotate(s, p)
 
-            plt.scatter(Xu_new[v, :, 0], Xu_new[v, :, 1])
-            for i, p in enumerate(Xu_new[v]):
-                plt.annotate(f"p_{v}{i}", p)
-            for u, Mu in enumerate(M):
+            plt.scatter(M_new[u, :, 0], M_new[u, :, 1])
+            for i, p in enumerate(M_new[u]):
+                plt.annotate(f"p_{u}{i}", p) """
+            for v, Mu in enumerate(M_new):
+                # u: sender
                 if u != v:
-                    if u in anchor_list:
-                        m_uv = np.array([pairwise_potential(xr, Mu[0], D[u, v], 1) for xr in Xu_new[v]])
+                    if v in anchor_list:
+                        sigma = np.std(euclidean_distances(Mu[0].reshape(1, -1),M_new[u]))
+                        neff = int(1/sum(weights[v]**2))
+                        factor = silverman_factor(neff, 2)
+                        m_vu = np.array([pairwise_potential(xr, Mu[0], D[v, u], sigma*factor) for xr in M_new[u]])
                     else:
-                        ds = m_ru[u, v].dataset.T
-                        plt.scatter(ds[:, 0], ds[:, 1], label=f"x_ru of {u, v}")
-                        m_uv = m_ru[u, v](Xu_new[v].T)
+                        m_vu = m_ru[v, u](M_new[u].T)
 
-                    m_uv /= m_uv.sum()
-                    new_messages[v, u] = m_uv
-            plt.legend()
-            plt.show()
+                    new_messages[u, v] = m_vu
+            #plt.show()
                     
-            proposal_product = np.prod(new_messages[v, [i for i in range(n_samples) if i != v]], axis=0)
-            proposal_sum = np.sum(new_messages[v, [idx for idx in list(range(n_samples)) if idx not in (anchor_list + [v])]], axis=0)
+            proposal_product = np.prod(new_messages[u, [i for i in range(n_samples) if i != u]], axis=0)
+            proposal_sum = np.sum(new_messages[u, [idx for idx in list(range(n_samples)) if idx not in (anchor_list + [u])]], axis=0)
 
-            #proposal_product /= proposal_product.sum()
-            #proposal_sum /= proposal_sum.sum()
-            #print(f"product: {proposal_product}\nsum: {proposal_sum}")
-            W_v = proposal_product / proposal_sum
-            W_v /= W_v.sum()
-            weights[v] = W_v
-            #print(W_v)
+            W_u = proposal_product / proposal_sum
+            W_u /= W_u.sum()
+            weights[u] = W_u
 
         messages = new_messages
-        M = Xu_new
-    """ for i, n in enumerate(Xu_new):
+        M = M_new
+        plt.scatter(X[n_anchors:, 0], X[n_anchors:, 1], c="black")
+        plt.scatter(X[:n_anchors, 0], X[:n_anchors, 1], c="red")
+        for i, p in enumerate(X):
+            s = "r"
+            if i < n_anchors:
+                s = "a"
+            s += str(i)
+            plt.annotate(s, p)
+
+        weighted_means = np.einsum('ijk,ij->ik', M, weights)
+        plt.scatter(weighted_means[n_anchors:, 0], weighted_means[n_anchors:, 1], c="orange")
+        for i, p in enumerate(weighted_means):
+            s = "pred"
+            if i < n_anchors:
+                continue
+            s += str(i)
+            plt.annotate(s, p)
+        plt.show()
+
+    """ for i, n in enumerate(M_new):
         plt.scatter(n[:, 0], n[:, 1], label=f"particle of {i}")
 
     
@@ -482,15 +508,14 @@ def calculate_message_ur(xr: np.ndarray, Mu: np.ndarray, D: np.ndarray, r: int, 
     return message
 
 import time
-#np.random.seed(21)
-n_samples, d_dimensions = 6, 2
-m_meters = 30
-n_particles = 8
+n_samples, d_dimensions = 30, 2
+m_meters = 200
+n_particles = 50
 r_radius = 20
-n_anchors = 3
+n_anchors = 8
 X = generate_X_points(m_meters, n_samples, d_dimensions)
 
-noise = np.random.normal(0, 2, (n_samples, n_samples))
+noise = np.random.normal(0, 1, (n_samples, n_samples))
 noise -= np.diag(noise.diagonal())
 symetric_noise = (noise + noise.T) / 2
 D = euclidean_distances(X) + symetric_noise * 0
