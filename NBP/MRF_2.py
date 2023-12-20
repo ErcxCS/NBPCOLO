@@ -73,10 +73,12 @@ def generate_particles(D: np.ndarray, anchors: np.ndarray, n_particles: int, m):
     all_particles = []
     prior_beliefs = [1 for _ in range(n_anchors)]
     intersections = []
-    for intersection in find_intersection(D, anchors, m):
+    for i, intersection in enumerate(find_intersecting_bbox(D, anchors, np.array([0, m, 0, m]))):
+        if i < len(anchors):
+            continue
         xmin, xmax, ymin, ymax = intersection
         intersections.append(intersection)
-        
+        print(intersection)
         plt.plot([xmin, xmax, xmax, xmin, xmin], [ymin, ymin, ymax, ymax, ymin], c='red')
         xs = np.random.uniform(xmin, xmax, size=n_particles)
         ys = np.random.uniform(ymin, ymax, size=n_particles)
@@ -90,6 +92,74 @@ def generate_particles(D: np.ndarray, anchors: np.ndarray, n_particles: int, m):
     M = np.concatenate((anchor_particles, M), axis=0)
     prior_beliefs = np.array(prior_beliefs)
     return M, prior_beliefs, intersections
+
+def create_bbox(D: np.ndarray, anchors: np.ndarray, limits: np.ndarray):
+    """
+    Creates bounded boxes for n samples from distances to anchor nodes
+
+    Parameters
+    --
+    D: array_like
+        (n_samples, n_samples) Measured distance matrix between samples. First len(anchors) are distances of anchors to all others
+    anchors: array_like
+        (n_samples, d) shaped known locations of anchors
+    limits: array_like: [dx_min, dx_max, dy_min, dy_max]
+        limits of the bounded boxes for all samples.
+        Represents deployment area when limits.shape[0] == 1, will be applied for all samples.
+        if anchors.shape[1] == 3, each bbox will be represented with 8 elements, representing limits in 3D
+    
+    Returns
+    --
+    bbox: array_like
+        bounded box for n_samples
+    """
+    n_samples = D.shape[0]
+    n_anchors, d = anchors.shape
+    bboxes = np.zeros((n_samples, n_anchors, 2*d))
+
+    for i in range(n_samples):
+        for j in range(n_anchors):
+            if i == j:
+                continue
+
+            for k in range(d):
+                bboxes[i, j, 2*k] = max(anchors[j, k] - D[i, j], limits[2*k])
+                bboxes[i, j, 2*k+1] = min(anchors[j, k] + D[i, j], limits[2*k+1])
+
+    return bboxes
+
+def find_intersecting_bbox(D: np.ndarray, anchors: np.ndarray, limits: np.ndarray):
+    """
+    Finds the intersections of the bounding boxes created for n samples from distances to anchor nodes
+
+    Parameters
+    --
+    D: array_like
+        (n_samples, n_samples) Measured distance matrix between samples. First len(anchors) are distances of anchors to all others
+    anchors: array_like
+        (n_samples, d) shaped known locations of anchors
+    limits: array_like: [dx_min, dx_max, dy_min, dy_max]
+        limits of the bounded boxes for all samples.
+        Represents deployment area when limits.shape[0] == 1, will be applied for all samples.
+        if anchors.shape[1] == 3, each bbox will be represented with 8 elements, representing limits in 3D
+    
+    Returns
+    --
+    intersections: array_like
+        intersections of the bounding boxes for n_samples
+    """
+    anchor_bboxes = create_bbox(D, anchors, limits)
+    n_samples, n_anchors, _ = anchor_bboxes.shape
+    d = anchors.shape[1]
+    intersections = np.zeros((n_samples, 2*d))
+
+    for i in range(n_samples):
+        for k in range(d):
+            intersections[i, 2*k] = np.max(anchor_bboxes[i, :, 2*k], axis=0)
+            intersections[i, 2*k+1] = np.min(anchor_bboxes[i, :, 2*k+1], axis=0)
+
+    return intersections
+
 
 def find_intersection(D: np.ndarray, anchors: np.ndarray, m: int):
     n_samples = D.shape[0]
@@ -508,11 +578,12 @@ def calculate_message_ur(xr: np.ndarray, Mu: np.ndarray, D: np.ndarray, r: int, 
     return message
 
 import time
-n_samples, d_dimensions = 30, 2
-m_meters = 200
-n_particles = 50
+np.random.seed(23)
+n_samples, d_dimensions = 8, 2
+m_meters = 40
+n_particles = 30
 r_radius = 20
-n_anchors = 8
+n_anchors = 4
 X = generate_X_points(m_meters, n_samples, d_dimensions)
 
 noise = np.random.normal(0, 1, (n_samples, n_samples))
