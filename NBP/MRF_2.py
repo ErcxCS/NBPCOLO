@@ -73,13 +73,14 @@ def generate_particles(D: np.ndarray, anchors: np.ndarray, n_particles: int, m):
     all_particles = []
     prior_beliefs = [1 for _ in range(n_anchors)]
     intersections = []
-    for i, intersection in enumerate(find_intersecting_bbox(D, anchors, np.array([0, m, 0, m]))):
+    for i, intersection in enumerate(create_bbox(D, anchors, np.array([0, m, 0, m]))):
         if i < len(anchors):
             continue
         xmin, xmax, ymin, ymax = intersection
         intersections.append(intersection)
-        print(intersection)
         plt.plot([xmin, xmax, xmax, xmin, xmin], [ymin, ymin, ymax, ymax, ymin], c='red')
+
+
         xs = np.random.uniform(xmin, xmax, size=n_particles)
         ys = np.random.uniform(ymin, ymax, size=n_particles)
         particles = np.column_stack([xs, ys])
@@ -116,6 +117,7 @@ def create_bbox(D: np.ndarray, anchors: np.ndarray, limits: np.ndarray):
     n_samples = D.shape[0]
     n_anchors, d = anchors.shape
     bboxes = np.zeros((n_samples, n_anchors, 2*d))
+    intersection_bboxes = np.zeros((n_samples, 2*d))
 
     for i in range(n_samples):
         for j in range(n_anchors):
@@ -125,8 +127,14 @@ def create_bbox(D: np.ndarray, anchors: np.ndarray, limits: np.ndarray):
             for k in range(d):
                 bboxes[i, j, 2*k] = max(anchors[j, k] - D[i, j], limits[2*k])
                 bboxes[i, j, 2*k+1] = min(anchors[j, k] + D[i, j], limits[2*k+1])
+        
+        for k in range(d):
+            intersection_bboxes[i, 2*k] = np.max(bboxes[i, :, k*2], axis=0)
+            intersection_bboxes[i, 2*k+1] = np.min(bboxes[i, :, k*2+1], axis=0)
 
-    return bboxes
+
+    return intersection_bboxes
+
 
 def find_intersecting_bbox(D: np.ndarray, anchors: np.ndarray, limits: np.ndarray):
     """
@@ -243,6 +251,29 @@ def silverman_factor(neff, d):
 
 from scipy.stats import gaussian_kde
 import numpy as np
+def duo_potential(xr: np.ndarray, xu: np.ndarray, dru: int, sigma:float) -> np.ndarray:
+    """
+    Pair-wise potential function for particles of node r and u
+    Usage: m_vu = duo_potential(M_new[u], Mu[0], D[v, u], sigma*factor)
+
+    Parameters
+    --
+    xr: np.ndarray
+        Particles of node r
+    xu: np.ndarray
+        Particle of node u
+    dru: int
+        Measured distance between node r and node u
+    sigma: float
+        Standard deviation for set of particles of node r
+
+    Returns
+    --
+    likelihoods: np.ndarray
+        Array of likelihoods for each particle
+    """
+    dist = np.linalg.norm(xr - xu, axis=1)
+    return norm.pdf(dru - dist, scale=sigma)
 
 def one_step_NBP(D: np.array, anchors: np.ndarray, n_particles: int, X:np.ndarray, m: int):
     """
@@ -334,6 +365,7 @@ def one_step_NBP(D: np.array, anchors: np.ndarray, n_particles: int, X:np.ndarra
                         neff = int(1/sum(weights[v]**2))
                         factor = silverman_factor(neff, 2)
                         m_vu = np.array([pairwise_potential(xr, Mu[0], D[v, u], sigma*factor) for xr in M_new[u]])
+
                     else:
                         m_vu = m_ru[v, u](M_new[u].T)
 
