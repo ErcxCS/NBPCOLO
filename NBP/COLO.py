@@ -52,6 +52,30 @@ def duo_potential(xr: np.ndarray, xu: np.ndarray, dru: int, sigma:float) -> np.n
     dist = np.linalg.norm(xr - xu, axis=1)
     return norm.pdf(dru - dist, scale=sigma)
 
+def duo_potential_single(xr: np.ndarray, xu: np.ndarray, dru: int, sigma:float) -> np.ndarray:
+    """
+    Pair-wise potential function for particles of node r and u
+    Usage: m_vu = duo_potential(M_new[u], Mu[0], D[v, u], sigma*factor)
+
+    Parameters
+    --
+    xr: np.ndarray
+        Particles of node r
+    xu: np.ndarray
+        Particle of node u
+    dru: int
+        Measured distance between node r and node u
+    sigma: float
+        Standard deviation for set of particles of node r
+
+    Returns
+    --
+    likelihoods: np.ndarray
+        Array of likelihoods for each particle
+    """
+    dist = np.linalg.norm(xr - xu, axis=1)
+    return norm.pdf(dru - dist, scale=sigma)
+
 
 def silverman_factor(neff: int, d:int):
     """
@@ -107,15 +131,21 @@ def create_bbox(D: np.ndarray, anchors: np.ndarray, limits: np.ndarray): #TODO: 
     for i in range(n_samples):
         for j in range(n_anchors):
             if i == j:
+                bboxes[i, j] = limits
                 continue
             for k in range(d):
                 bboxes[i, j, 2*k] = max(anchors[j, k] - D[i, j], limits[2*k])
                 bboxes[i, j, 2*k+1] = min(anchors[j, k] + D[i, j], limits[2*k+1])
+            
+            """ if i == 2:
+                xmin, xmax, ymin, ymax =  bboxes[i, j]
+                plt.plot([xmin, xmax, xmax, xmin, xmin], [ymin, ymin, ymax, ymax, ymin]) """
+        
         for k in range(d):
             intersection_bboxes[i, 2*k] = np.max(bboxes[i, :, k*2], axis=0)
             intersection_bboxes[i, 2*k+1] = np.min(bboxes[i, :, k*2+1], axis=0)
 
-
+        
     return intersection_bboxes
 
 def generate_particles(intersections: np.ndarray, anchors: np.ndarray, n_particles: int):
@@ -200,7 +230,13 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
     intersections = create_bbox(D, anchors, limits=deployment_area)
     M, prior_beliefs = generate_particles(intersections, anchors, n_particles)
 
-    """ messages = np.ones((n_samples, n_samples, n_particles))
+    """ plt.scatter(X[:, 0], X[:, 1])
+    for i, bbox in enumerate(intersections):
+        xmin, xmax, ymin, ymax = bbox
+        plt.plot([xmin, xmax, xmax, xmin, xmin], [ymin, ymin, ymax, ymax, ymin], c='red')
+        plt.annotate(f"a{i}", X[i])
+    plt.show() """
+    messages = np.ones((n_samples, n_samples, n_particles))
     new_messages = messages.copy()
     weights = prior_beliefs / np.sum(prior_beliefs, axis=1, keepdims=True)
 
@@ -217,20 +253,24 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
                     sin_u = (D[r, u] + v) * np.sin(thetas)
                     x_ru = Mr + np.column_stack([cos_u, sin_u])
 
-                    mono_potential_bbox(intersections[u])(x_ru)
+                    qq = mono_potential_bbox(intersections[u])(x_ru)
+                    
 
                     w_ru = weights[r] / messages[r, u]
                     w_ru /= w_ru.sum()
+                    w_ru *= qq
+                    
+                    print(w_ru)
 
                     kde = gaussian_kde(x_ru.T, weights=w_ru, bw_method='silverman')
                     m_ru[r, u] = kde
                     M_new[u, r] = kde.resample(new_n_particles).T
- """
+
 
 np.random.seed(23)
 n, d = 8, 2
 m = 25
-p = 28
+p = 48
 r = 15
 a = 4
 i = 5

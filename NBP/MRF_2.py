@@ -78,7 +78,7 @@ def generate_particles(D: np.ndarray, anchors: np.ndarray, n_particles: int, m):
             continue
         xmin, xmax, ymin, ymax = intersection
         intersections.append(intersection)
-        plt.plot([xmin, xmax, xmax, xmin, xmin], [ymin, ymin, ymax, ymax, ymin], c='red')
+        #plt.plot([xmin, xmax, xmax, xmin, xmin], [ymin, ymin, ymax, ymax, ymin], c='red')
 
 
         xs = np.random.uniform(xmin, xmax, size=n_particles)
@@ -305,8 +305,14 @@ def one_step_NBP(D: np.array, anchors: np.ndarray, n_particles: int, X:np.ndarra
     # messages[r, u, k] represents message node r's k particle receives from node u's all particles
     weights = beliefs / np.sum(beliefs, axis=1, keepdims=True) # weights for each nodes, particles
     # initially, all weights of particles for a node are equal and their sum is 1
-    
-    for i in range(15):
+    print(intersections[:n_anchors])
+    print(len(intersections))
+    plt.scatter(anchors[:, 0], anchors[:, 1])
+    for bbox in intersections[:n_anchors]:
+        xmin, xmax, ymin, ymax = bbox
+        plt.plot([xmin, xmax, xmax, xmin, xmin], [ymin, ymin, ymax, ymax, ymin], c='red')
+    plt.show()
+    for i in range(1):
         M_new = np.ones((n_samples, n_samples, new_n_particles, 2)) # not like this
         m_ru = dict()
         for r, Mr in enumerate(M): # for each node r and its particles Mr
@@ -612,9 +618,9 @@ def calculate_message_ur(xr: np.ndarray, Mu: np.ndarray, D: np.ndarray, r: int, 
 import time
 np.random.seed(23)
 n_samples, d_dimensions = 8, 2
-m_meters = 40
-n_particles = 30
-r_radius = 20
+m_meters = 25
+n_particles = 28
+r_radius = 15
 n_anchors = 4
 X = generate_X_points(m_meters, n_samples, d_dimensions)
 
