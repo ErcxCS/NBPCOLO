@@ -234,8 +234,8 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
     n_targets = n_samples - n_anchors # number of nodes to localize
     anchor_list = list(range(n_anchors)) # first n nodes are the anchors
 
-    target_neighbours = n_samples - 1 # Assumes fully connected graph, find a way for not fully connected
-    # target_neighbours = n_samples - n_anchors - 1
+    #target_neighbours = n_samples - 1 # Assumes fully connected graph, find a way for not fully connected
+    target_neighbours = n_samples - n_anchors - 1
     new_n_particles = round(k * n_particles / target_neighbours)
     n_particles = round(new_n_particles * target_neighbours / k)
 
@@ -243,7 +243,7 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
     M, prior_beliefs = generate_particles(intersections, anchors, n_particles)
 
     messages = np.ones((n_samples, n_samples, n_particles))
-    new_messages = messages.copy()
+    new_messages = np.ones((n_samples, n_samples, k*n_particles))
     weights = prior_beliefs / np.sum(prior_beliefs, axis=1, keepdims=True)
     # we have different prior beliefs for each node, however we do not use them
     # anywhere, we normalize weights, because all priors are the same, all weights
@@ -257,8 +257,10 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
             # sender
             for u, Mu in enumerate(M): # skip anchors?
                 # receiver
+                if u in anchor_list:
+                    continue
                 if r != u:
-                    v = np.random.normal(0, 2, size=n_particles)*0
+                    v = np.random.normal(0, 2, size=n_particles)*1
                     thetas = np.random.uniform(0, 2*np.pi, size=n_particles)
                     cos_u = (D[r, u] + v) * np.cos(thetas)
                     sin_u = (D[r, u] + v) * np.sin(thetas)
@@ -270,7 +272,14 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
                     kde = gaussian_kde(x_ru.T, weights=w_ru, bw_method='silverman')
                     m_ru[r, u] = kde
                     # kde constructed with particles of r to evaluate resampled particles of u
-                    M_new[u, r] = kde.resample(new_n_particles).T
+                    #if u not in anchor_list:
+                    if r not in anchor_list:
+                        M_new[u, r] = kde.resample(new_n_particles).T
+
+                    """ if r in anchor_list:
+                        idxs = np.arange(n_particles)
+                        indices = np.random.choice(idxs, size=new_n_particles, replace=True, p=w_ru)
+                        M_new[r, u] = x_ru[indices] """
                     # particles of u generated from neighbour node r's kde
                     # We shouldn't generate new particles for anchors?
                     # If we don't generate particles for achors, 
@@ -287,14 +296,17 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
                     #   r: sender
                     #   u: receiver (above problem occurs when u is anchor)
                     # We still need x_ru for anchors because they send messages
-        
+        M_new = M_new[n_anchors:, n_anchors:]
         mask = np.all(M_new == np.ones((new_n_particles, d_dim)), axis=(2, 3))
         M_new = M_new[~mask]
-        M_new = M_new.reshape(n_samples, k*n_particles, d_dim)
-        # migh need to change to (n_samples, k*new_n_particles*(n_samples-1), d_dim)
-
+        M_new = M_new.reshape(n_targets, k*n_particles, d_dim)
+        M_new = np.vstack([np.ones((n_anchors, k*n_particles, d_dim)), M_new])
+        # migh need to change to (n_samples, k*new_n_particles*(target_neighbours), d_dim)
+        #plt.scatter(M_new[0, :, 0], M_new[0, :, 1])
         for u, Mu_new in enumerate(M_new): # skip anchors?
-            # receiver
+            #receiver
+            if u in anchor_list:
+                continue
             for v, Mv_new in enumerate(M_new):
                 # sender
                 if u != v:
@@ -313,7 +325,8 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
                     new_messages[u, v] = m_vu # message that u receives from v
            
             proposal_product_u = np.prod(new_messages[u, [i for i in range(n_samples) if i != u]], axis=0)
-            proposal_sum_u = np.sum(new_messages[u, [i for i in range(n_samples) if i != u]], axis=0)
+            #proposal_sum_u = np.sum(new_messages[u, [i for i in range(n_samples) if i != u]], axis=0)
+            proposal_sum_u = np.sum(new_messages[u, [idx for idx in list(range(n_samples)) if idx not in (anchor_list + [u])]], axis=0)
             # This doesn't makes sense...?
             # Maybe, apply following changes when using m_ru[u, v].dataset() instead of Mu_new.T?
             # TODO: change target_neighbours, change M_new.reshape, change proposal_sum
@@ -322,17 +335,17 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
             W_u = proposal_product_u / proposal_sum_u
             W_u /= W_u.sum()
 
-            idxs = np.arange(n_particles)
+            idxs = np.arange(n_particles*k)
             indices = np.random.choice(idxs, size=n_particles, replace=True, p=W_u)
 
-            M_new[u] = Mu_new[indices]
-            #weights[u] = W_u#[indices] #???
+            M[u] = Mu_new[indices]
+            weights[u] = W_u[indices] #???
+            weights[u] /= weights[u].sum()
             messages[u] = new_messages[u, :, indices].T
 
-        M = M_new
 
         weighted_means = np.einsum('ijk,ij->ik', M, weights)
-        print(rmse(X, weighted_means))
+        print(rmse(X[n_anchors:], weighted_means[n_anchors:]))
         plt.scatter(X[n_anchors:, 0], X[n_anchors:, 1], color='c')
         plt.scatter(X[:n_anchors, 0], X[:n_anchors, 1], color='m')
         plt.scatter(weighted_means[:, 0], weighted_means[:, 1], color='y')
@@ -350,14 +363,15 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
 
         
 
-#np.random.seed(21)
+np.random.seed(42)
+#print(np.random.seed())
 n, d = 16, 2
 m = 50
 p = 300
 r = 15
-a = 8
+a = 7
 i = 10
-k = 1
+k = 4
 X = np.random.uniform(0, m, size=(n, d))
 
 noise = np.random.normal(0, 2, size=(n, n))
