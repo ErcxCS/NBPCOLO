@@ -243,7 +243,7 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
     M, prior_beliefs = generate_particles(intersections, anchors, n_particles)
 
     messages = np.ones((n_samples, n_samples, n_particles))
-    new_messages = messages.copy()
+    new_messages = np.ones((n_samples, n_samples, k*n_particles))
     weights = prior_beliefs / np.sum(prior_beliefs, axis=1, keepdims=True)
     # we have different prior beliefs for each node, however we do not use them
     # anywhere, we normalize weights, because all priors are the same, all weights
@@ -314,6 +314,7 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
            
             proposal_product_u = np.prod(new_messages[u, [i for i in range(n_samples) if i != u]], axis=0)
             proposal_sum_u = np.sum(new_messages[u, [i for i in range(n_samples) if i != u]], axis=0)
+            #proposal_sum_u = np.sum(new_messages[u, [idx for idx in list(range(n_samples)) if idx not in (anchor_list + [u])]], axis=0)
             # This doesn't makes sense...?
             # Maybe, apply following changes when using m_ru[u, v].dataset() instead of Mu_new.T?
             # TODO: change target_neighbours, change M_new.reshape, change proposal_sum
@@ -322,17 +323,16 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
             W_u = proposal_product_u / proposal_sum_u
             W_u /= W_u.sum()
 
-            idxs = np.arange(n_particles)
+            idxs = np.arange(n_particles*k)
             indices = np.random.choice(idxs, size=n_particles, replace=True, p=W_u)
 
-            M_new[u] = Mu_new[indices]
-            #weights[u] = W_u#[indices] #???
+            M[u] = Mu_new[indices]
+            weights[u] = W_u[indices] #???
+            weights[u] /= weights[u].sum()
             messages[u] = new_messages[u, :, indices].T
 
-        M = M_new
-
         weighted_means = np.einsum('ijk,ij->ik', M, weights)
-        print(rmse(X, weighted_means))
+        print(rmse(X[n_anchors:], weighted_means[n_anchors:]))
         plt.scatter(X[n_anchors:, 0], X[n_anchors:, 1], color='c')
         plt.scatter(X[:n_anchors, 0], X[:n_anchors, 1], color='m')
         plt.scatter(weighted_means[:, 0], weighted_means[:, 1], color='y')
@@ -350,14 +350,14 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
 
         
 
-#np.random.seed(21)
+np.random.seed(42)
 n, d = 16, 2
 m = 50
 p = 300
 r = 15
-a = 8
+a = 7
 i = 10
-k = 1
+k = 2
 X = np.random.uniform(0, m, size=(n, d))
 
 noise = np.random.normal(0, 2, size=(n, n))
