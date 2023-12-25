@@ -233,6 +233,7 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
     n_anchors = anchors.shape[0] # number of anchors
     n_targets = n_samples - n_anchors # number of nodes to localize
     anchor_list = list(range(n_anchors)) # first n nodes are the anchors
+    _rmse = []
 
     #target_neighbours = n_samples - 1 # Assumes fully connected graph, find a way for not fully connected
     target_neighbours = n_samples - n_anchors - 1
@@ -301,6 +302,7 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
         M_new = M_new[~mask]
         M_new = M_new.reshape(n_targets, k*n_particles, d_dim)
         M_new = np.vstack([np.ones((n_anchors, k*n_particles, d_dim)), M_new])
+
         # migh need to change to (n_samples, k*new_n_particles*(target_neighbours), d_dim)
         #plt.scatter(M_new[0, :, 0], M_new[0, :, 1])
         for u, Mu_new in enumerate(M_new): # skip anchors?
@@ -345,11 +347,13 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
 
 
         weighted_means = np.einsum('ijk,ij->ik', M, weights)
-        print(rmse(X[n_anchors:], weighted_means[n_anchors:]))
-        plt.scatter(X[n_anchors:, 0], X[n_anchors:, 1], color='c')
-        plt.scatter(X[:n_anchors, 0], X[:n_anchors, 1], color='m')
-        plt.scatter(weighted_means[:, 0], weighted_means[:, 1], color='y')
-        for i, bbox in enumerate(intersections):
+        _rmse.append(rmse(X[n_anchors:], weighted_means[n_anchors:]))
+        plt.scatter(X[n_anchors:, 0], X[n_anchors:, 1], color='c', label="true")
+        plt.scatter(X[:n_anchors, 0], X[:n_anchors, 1], color='r', label="anchors")
+        plt.scatter(weighted_means[n_anchors:, 0], weighted_means[n_anchors:, 1], color='y', label="preds")
+        plt.plot([X[n_anchors:, 0], weighted_means[n_anchors:, 0]], [X[n_anchors:, 1], weighted_means[n_anchors:, 1]], "k--")
+        plt.title(f"rmse - {iter}: {_rmse[iter]}")
+        """ for i, bbox in enumerate(intersections):
             if i >= n_anchors:
                 xmin, xmax, ymin, ymax = bbox
                 plt.plot([xmin, xmax, xmax, xmin, xmin], [ymin, ymin, ymax, ymax, ymin], label=f"{i}")
@@ -357,22 +361,33 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
                 plt.annotate(f"Pt{i}", weighted_means[i])
             else:
                 plt.annotate(f"A{i}", X[i])
-                plt.annotate(f"Pa{i}", weighted_means[i])
+                plt.annotate(f"Pa{i}", weighted_means[i]) """
         plt.legend()
         plt.show()
+    
+    plt.plot(np.arange(n_iter), _rmse)
+    plt.ylabel("rmse")
+    plt.xlabel("iter")
+    plt.title("rmse/iter")
+    plt.show()
 
         
 
-np.random.seed(42)
+#np.random.seed(42)
 #print(np.random.seed())
-n, d = 16, 2
-m = 50
+n, d = 64, 2
+m = 100
+area = np.array([0, m, 0, m])
 p = 300
-r = 15
-a = 7
+r = 30
+a = 5
 i = 10
-k = 4
-X = np.random.uniform(0, m, size=(n, d))
+k = 2
+#k = round(((m**2 - (np.pi*r**2)) / (n / (a+1))) / p)
+
+X = np.empty((n, d))
+for j in range(d):
+    X[:, j] = np.random.uniform(area[2*j], area[2*j+1], size=n)
 
 noise = np.random.normal(0, 2, size=(n, n))
 noise -= np.diag(noise.diagonal())
