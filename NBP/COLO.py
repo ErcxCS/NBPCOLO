@@ -147,10 +147,6 @@ def create_bbox(D: np.ndarray, anchors: np.ndarray, limits: np.ndarray): #TODO: 
             for k in range(d):
                 bboxes[i, j, 2*k] = max(anchors[j, k] - D[i, j], limits[2*k])
                 bboxes[i, j, 2*k+1] = min(anchors[j, k] + D[i, j], limits[2*k+1])
-            
-            """ if i == 2:
-                xmin, xmax, ymin, ymax =  bboxes[i, j]
-                plt.plot([xmin, xmax, xmax, xmin, xmin], [ymin, ymin, ymax, ymax, ymin]) """
         
         for k in range(d):
             intersection_bboxes[i, 2*k] = np.max(bboxes[i, :, k*2], axis=0)
@@ -203,6 +199,13 @@ def generate_particles(intersections: np.ndarray, anchors: np.ndarray, n_particl
 
     return all_particles, prior_beliefs
 
+def plot_preds(X_true: np.ndarray, X_preds: np.ndarray, anchors: np.ndarray):
+    n_targets, d = X_true.shape
+    n_anchors = anchors.shape[0]
+    
+    plt.scatter(X_true[:, 0], X_true[:, 1], label="true_")
+
+
 def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
                   deployment_area: np.ndarray, n_particles: int, n_iter: int, k: int):
     """
@@ -245,11 +248,50 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
     messages = np.ones((n_samples, n_samples, n_particles))
     new_messages = np.ones((n_samples, n_samples, k*n_particles))
     weights = prior_beliefs / np.sum(prior_beliefs, axis=1, keepdims=True)
+
+    _rmse = []
+
     # we have different prior beliefs for each node, however we do not use them
     # anywhere, we normalize weights, because all priors are the same, all weights
     # for all particles of all nodes will be the same.
-
+    
     for iter in range(n_iter):
+        ############################ PLOTING #############################################
+        weighted_means = np.einsum('ijk,ij->ik', M[n_anchors:], weights[n_anchors:])
+        plt.scatter(anchors[:, 0], anchors[:, 1], label="anchors", c="r", marker='*') # anchors nodes
+        plt.scatter(X[n_anchors:, 0], X[n_anchors:, 1], label="true", c="g", marker='+') # target nodes
+        plt.scatter(weighted_means[:, 0], weighted_means[:, 1], label="preds", c="y", marker="x") # preds
+        plt.plot([X[n_anchors:, 0], weighted_means[:, 0]], [X[n_anchors:, 1], weighted_means[:, 1]], color="k--", label="error")
+        for i, xt in enumerate(X):
+            if i < n_anchors:
+                plt.annotate(f"A_{i}", xt)
+            else:
+                plt.annotate(f"t_{i}", xt)
+                plt.annotate(f"p_{i}", weighted_means[i - n_anchors])
+        plt.legend()
+        plt.show()
+
+        idx = 11
+        plt.scatter(M[idx, :, 0], M[idx, :, 1], marker=".", linewidths=0.5) # particles of idx
+        for j, p in enumerate(M[idx, :]): # annotating particles of idx with weights
+            plt.annotate("{:.2f}".format(weights[idx, j]), p)
+        for i, M_target_p in enumerate(M[n_anchors:]): # annotating true locations
+            plt.annotate(f"target {n_anchors + i}", X[n_anchors + i])
+
+            """ plt.scatter(M_target_p[:, 0], M_target_p[:, 1], label=f"particles of {i + n_anchors}")
+            for j, p in enumerate(M_target_p):
+                plt.annotate(f"{n_anchors + i}", p) """
+
+            """ bbox = intersections[i + n_anchors]
+            xmin, xmax, ymin, ymax = bbox
+            plt.plot([xmin, xmax, xmax, xmin, xmin], [ymin, ymin, ymax, ymax, ymin], marker="") """
+        for i, M_anchor_p in enumerate(M[:n_anchors]):
+            plt.annotate(f"anchor {i}", X[i])
+        plt.xlim((-5, 55))
+        plt.ylim((-5, 55))
+        plt.legend()
+        plt.show()
+        ################################################################################
         M_new = np.ones((n_samples, n_samples, new_n_particles, d_dim))
         m_ru = dict()
         
@@ -266,6 +308,18 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
 
                     w_ru = weights[r] / messages[r, u]
                     w_ru /= w_ru.sum()
+
+                    if r == idx:
+                        plt.scatter(X[u, 0], X[u, 1], label="node u", c="r", marker='*')
+                        plt.scatter(X[r, 0], X[r, 1], label="node r", c="g", marker="+")
+                        plt.annotate(f"target {u}", X[u])
+
+                        plt.scatter(x_ru[:, 0], x_ru[:, 1], marker=".", linewidths=0.5)
+                        for j, p in enumerate(x_ru):
+                            plt.annotate("{:.2f}".format(w_ru[j]), p)
+                        plt.xlim((-5, 55))
+                        plt.ylim((-5, 55))
+                        plt.show()
 
                     kde = gaussian_kde(x_ru.T, weights=w_ru, bw_method='silverman')
                     m_ru[r, u] = kde
@@ -331,34 +385,41 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
             weights[u] /= weights[u].sum()
             messages[u] = new_messages[u, :, indices].T
 
-        weighted_means = np.einsum('ijk,ij->ik', M, weights)
-        print(rmse(X[n_anchors:], weighted_means[n_anchors:]))
-        plt.scatter(X[n_anchors:, 0], X[n_anchors:, 1], color='c')
-        plt.scatter(X[:n_anchors, 0], X[:n_anchors, 1], color='m')
-        plt.scatter(weighted_means[:, 0], weighted_means[:, 1], color='y')
-        for i, bbox in enumerate(intersections):
-            if i >= n_anchors:
-                xmin, xmax, ymin, ymax = bbox
-                plt.plot([xmin, xmax, xmax, xmin, xmin], [ymin, ymin, ymax, ymax, ymin], label=f"{i}")
-                plt.annotate(f"Xt{i}", X[i])
-                plt.annotate(f"Pt{i}", weighted_means[i])
-            else:
-                plt.annotate(f"A{i}", X[i])
-                plt.annotate(f"Pa{i}", weighted_means[i])
-        plt.legend()
-        plt.show()
+        weighted_means = np.einsum('ijk,ij->ik', M[n_anchors:], weights[n_anchors:])
+        _rmse.append(rmse(X[n_anchors:], weighted_means[n_anchors:]))
+        if (iter + 1) % 10:
+
+            plt.scatter(X[n_anchors:, 0], X[n_anchors:, 1], color='c')
+            plt.scatter(X[:n_anchors, 0], X[:n_anchors, 1], color='m')
+            plt.scatter(weighted_means[:, 0], weighted_means[:, 1], color='y')
+            """ for i, bbox in enumerate(intersections):
+                if i >= n_anchors:
+                    xmin, xmax, ymin, ymax = bbox
+                    plt.plot([xmin, xmax, xmax, xmin, xmin], [ymin, ymin, ymax, ymax, ymin], label=f"{i}")
+                    plt.annotate(f"Xt{i}", X[i])
+                    plt.annotate(f"Pt{i}", weighted_means[i])
+                else:
+                    plt.annotate(f"A{i}", X[i])
+                    plt.annotate(f"Pa{i}", weighted_means[i]) """
+            plt.legend()
+            plt.show()
 
         
 
 np.random.seed(42)
 n, d = 16, 2
 m = 50
-p = 300
+p = 30
 r = 15
-a = 7
+a = 5
 i = 10
 k = 2
-X = np.random.uniform(0, m, size=(n, d))
+area = np.array([0, m, 0, m])
+X =  np.empty((n, d))
+bbox = area.reshape(-1, 2)
+for j in range(d):
+    X[:, j] = np.random.uniform(bbox[j, 0], bbox[j, 1], size=n)
+
 
 noise = np.random.normal(0, 2, size=(n, n))
 noise -= np.diag(noise.diagonal())
