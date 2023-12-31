@@ -205,6 +205,22 @@ def plot_preds(X_true: np.ndarray, X_preds: np.ndarray, anchors: np.ndarray):
     
     plt.scatter(X_true[:, 0], X_true[:, 1], label="true_")
 
+import open3d as o3d
+
+def create_point_cloud(data):
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(data)
+    return pcd
+
+def display_point_cloud(pcd):
+    o3d.visualization.draw_geometries([pcd])
+
+def create_anchor_cloud(anchor_ids):
+    data = np.random.rand(len(anchor_ids), 3) # Generate random points
+    pcd = create_point_cloud(data)
+    pcd.colors = o3d.utility.Vector3dVector(np.random.rand(len(anchor_ids), 3)) # Assign random colors
+    return pcd
+
 
 def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
                   deployment_area: np.ndarray, n_particles: int, n_iter: int, k: int):
@@ -257,46 +273,32 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
     
     for iter in range(n_iter):
         ############################ PLOTING #############################################
-        weighted_means = np.einsum('ijk,ij->ik', M[n_anchors:], weights[n_anchors:])
+        """weighted_means = np.einsum('ijk,ij->ik', M[n_anchors:], weights[n_anchors:])
         plt.scatter(anchors[:, 0], anchors[:, 1], label="anchors", c="r", marker='*') # anchors nodes
-        plt.scatter(X[n_anchors:, 0], X[n_anchors:, 1], label="true", c="g", marker='+') # target nodes
-        plt.scatter(weighted_means[:, 0], weighted_means[:, 1], label="preds", c="y", marker="x") # preds
-        plt.plot([X[n_anchors:, 0], weighted_means[:, 0]], [X[n_anchors:, 1], weighted_means[:, 1]], color="k--", label="error")
+        plt.scatter(X[n_anchors:, 0], X[n_anchors:, 1], label="true", c="g", marker='P') # target nodes
+        plt.scatter(weighted_means[:, 0], weighted_means[:, 1], label="preds", c="y", marker="X") # preds
+        plt.plot([X[n_anchors:, 0], weighted_means[:, 0]], [X[n_anchors:, 1], weighted_means[:, 1]], "k--")
         for i, xt in enumerate(X):
             if i < n_anchors:
                 plt.annotate(f"A_{i}", xt)
             else:
+                plt.scatter(M[i, :, 0], M[i, :, 1], marker=".", s=10)
                 plt.annotate(f"t_{i}", xt)
                 plt.annotate(f"p_{i}", weighted_means[i - n_anchors])
         plt.legend()
+        plt.title(f"iter: {iter}, Predictions with initial weights")
         plt.show()
-
-        idx = 11
-        plt.scatter(M[idx, :, 0], M[idx, :, 1], marker=".", linewidths=0.5) # particles of idx
-        for j, p in enumerate(M[idx, :]): # annotating particles of idx with weights
-            plt.annotate("{:.2f}".format(weights[idx, j]), p)
-        for i, M_target_p in enumerate(M[n_anchors:]): # annotating true locations
-            plt.annotate(f"target {n_anchors + i}", X[n_anchors + i])
-
-            """ plt.scatter(M_target_p[:, 0], M_target_p[:, 1], label=f"particles of {i + n_anchors}")
-            for j, p in enumerate(M_target_p):
-                plt.annotate(f"{n_anchors + i}", p) """
-
-            """ bbox = intersections[i + n_anchors]
-            xmin, xmax, ymin, ymax = bbox
-            plt.plot([xmin, xmax, xmax, xmin, xmin], [ymin, ymin, ymax, ymax, ymin], marker="") """
-        for i, M_anchor_p in enumerate(M[:n_anchors]):
-            plt.annotate(f"anchor {i}", X[i])
-        plt.xlim((-5, 55))
-        plt.ylim((-5, 55))
-        plt.legend()
-        plt.show()
+ """
+        """ bbox = intersections[i + n_anchors]
+        xmin, xmax, ymin, ymax = bbox
+        plt.plot([xmin, xmax, xmax, xmin, xmin], [ymin, ymin, ymax, ymax, ymin], marker="") """
         ################################################################################
         M_new = np.ones((n_samples, n_samples, new_n_particles, d_dim))
         m_ru = dict()
         
         for r, Mr in enumerate(M):
             # sender
+            #plt.scatter(Mr[:, 0], Mr[:, 1], label=f"particles of {r}")
             for u, Mu in enumerate(M): # skip anchors?
                 # receiver
                 if r != u:
@@ -309,43 +311,27 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
                     w_ru = weights[r] / messages[r, u]
                     w_ru /= w_ru.sum()
 
-                    if r == idx:
-                        plt.scatter(X[u, 0], X[u, 1], label="node u", c="r", marker='*')
-                        plt.scatter(X[r, 0], X[r, 1], label="node r", c="g", marker="+")
-                        plt.annotate(f"target {u}", X[u])
+                   
+                    """ plt.scatter(X[u, 0], X[u, 1], label="node u", c="r", marker='*')
+                    plt.scatter(X[r, 0], X[r, 1], label="node r", c="g", marker="+")
+                    plt.annotate(f"target {u}", X[u])
 
-                        plt.scatter(x_ru[:, 0], x_ru[:, 1], marker=".", linewidths=0.5)
-                        for j, p in enumerate(x_ru):
-                            plt.annotate("{:.2f}".format(w_ru[j]), p)
-                        plt.xlim((-5, 55))
-                        plt.ylim((-5, 55))
-                        plt.show()
+                    plt.scatter(x_ru[:, 0], x_ru[:, 1], marker=".", s=10)
+                    for j, p in enumerate(x_ru):
+                        plt.annotate("{:.2f}".format(w_ru[j]), p) """
+
+                    
 
                     kde = gaussian_kde(x_ru.T, weights=w_ru, bw_method='silverman')
                     m_ru[r, u] = kde
                     # kde constructed with particles of r to evaluate resampled particles of u
                     M_new[u, r] = kde.resample(new_n_particles).T
-                    # particles of u generated from neighbour node r's kde
-                    # We shouldn't generate new particles for anchors?
-                    # If we don't generate particles for achors, 
-                    # which particles are gonna use to evaluate them?
-                    """if u in anchor_list:
-                        M_new[u, r] = Mu """ # Will cause shape miss match
-                    # All Mu particles are on top of each other
-                    # Should we use x_ur instead?
-                    # x_ur is m_ru[u, r].dataset() which we may not have atm
-                    # This kinda does makes sense and inline with both papers.
-                    # However, this may also mean T0 is non anchor neighbours and not observed neighbours
-                    # So, T1 is not multi-hop neighbours, its just neighbours
-                    # Still, this doesn't contradicts with the neighnours are n-hop neighbours
-                    #   r: sender
-                    #   u: receiver (above problem occurs when u is anchor)
                     # We still need x_ru for anchors because they send messages
+                #plt.show()
         
         mask = np.all(M_new == np.ones((new_n_particles, d_dim)), axis=(2, 3))
         M_new = M_new[~mask]
         M_new = M_new.reshape(n_samples, k*n_particles, d_dim)
-        # migh need to change to (n_samples, k*new_n_particles*(n_samples-1), d_dim)
 
         for u, Mu_new in enumerate(M_new): # skip anchors?
             # receiver
@@ -354,26 +340,13 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
                 if u != v:
                     m_vu = m_ru[v, u](Mu_new.T) # Mu_new is the sampled particles from u's neighbour kde's
                     # m_vu is messages of particles from v to u
-                    # for anchors sending messages this is fine
-                    # however, when u is anchor maybe we should use
-                    # m_ru[u, v].dataset()? instead of Mu_new.T
-                    # if using above, then keep the particles of anchors as it is in the end:
-                    #   M_new[:n_anchors] = M[:n_anchors]
-                    #   Do we have to? particles of target nodes u will change in every iteration
-                    #   So will their kde. But distance from u to v is measured distance, so it will
-                    #   Stay the same, so, when u is anchor, its kde for all neighbours v shouldn't change?
-                    #   Just keep m_ru[u, v]? Unnecessary, just reconstruct anchor kdes each time.
                     # m_ru[v, u] is the kde constructed with particles of v (r == v) with distance to u
                     new_messages[u, v] = m_vu # message that u receives from v
            
             proposal_product_u = np.prod(new_messages[u, [i for i in range(n_samples) if i != u]], axis=0)
             proposal_sum_u = np.sum(new_messages[u, [i for i in range(n_samples) if i != u]], axis=0)
             #proposal_sum_u = np.sum(new_messages[u, [idx for idx in list(range(n_samples)) if idx not in (anchor_list + [u])]], axis=0)
-            # This doesn't makes sense...?
-            # Maybe, apply following changes when using m_ru[u, v].dataset() instead of Mu_new.T?
-            # TODO: change target_neighbours, change M_new.reshape, change proposal_sum
-            # T0 should be non anchor neighbours
-            # proposal_sum_u = np.sum(new_messages[u, [idx for idx in list(range(n_samples)) if idx not in (anchor_list + [u])]], axis=0)
+
             W_u = proposal_product_u / proposal_sum_u
             W_u /= W_u.sum()
 
@@ -386,12 +359,12 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
             messages[u] = new_messages[u, :, indices].T
 
         weighted_means = np.einsum('ijk,ij->ik', M[n_anchors:], weights[n_anchors:])
-        _rmse.append(rmse(X[n_anchors:], weighted_means[n_anchors:]))
-        if (iter + 1) % 10:
-
-            plt.scatter(X[n_anchors:, 0], X[n_anchors:, 1], color='c')
+        _rmse.append(rmse(X[n_anchors:], weighted_means))
+        if (iter + 1) % 10 == 0:
+            plt.plot(np.arange(iter + 1),  _rmse)
+            """ plt.scatter(X[n_anchors:, 0], X[n_anchors:, 1], color='c')
             plt.scatter(X[:n_anchors, 0], X[:n_anchors, 1], color='m')
-            plt.scatter(weighted_means[:, 0], weighted_means[:, 1], color='y')
+            plt.scatter(weighted_means[:, 0], weighted_means[:, 1], color='y') """
             """ for i, bbox in enumerate(intersections):
                 if i >= n_anchors:
                     xmin, xmax, ymin, ymax = bbox
@@ -425,7 +398,8 @@ noise = np.random.normal(0, 2, size=(n, n))
 noise -= np.diag(noise.diagonal())
 symetric_noise = (noise + noise.T) / 2
 D = euclidean_distances(X) + symetric_noise*0
-iterative_NBP(D=D, X=X, anchors=X[:a], deployment_area=np.array([0, m, 0, m]), n_particles=p, n_iter=i, k=k)
+print(D)
+#iterative_NBP(D=D, X=X, anchors=X[:a], deployment_area=np.array([0, m, 0, m]), n_particles=p, n_iter=i, k=k)
 
 
                     
