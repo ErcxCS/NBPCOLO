@@ -271,8 +271,9 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
     # for all particles of all nodes will be the same.
     
     for iter in range(n_iter):
-        ############################ PLOTING #############################################
         weighted_means = np.einsum('ijk,ij->ik', M[n_anchors:], weights[n_anchors:])
+        ############################ PLOTING #############################################
+        """ weighted_means = np.einsum('ijk,ij->ik', M[n_anchors:], weights[n_anchors:])
         plt.scatter(anchors[:, 0], anchors[:, 1], label="anchors", c="r", marker='*') # anchors nodes
         plt.scatter(X[n_anchors:, 0], X[n_anchors:, 1], label="true", c="g", marker='P') # target nodes
         plt.scatter(weighted_means[:, 0], weighted_means[:, 1], label="preds", c="y", marker="X") # preds
@@ -292,14 +293,18 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
         plt.title(f"iter: {iter}, Predictions with initial weights")
     
 
-        plt.show()
+        plt.show() """
         ################################################################################
         m_ru = dict()
-        M_new = [[] for i in range(n_samples) if i not in anchor_list]
+        M_new = [[] for i in range(n_samples)]
         
+        kn_particles = [k * n_particles for _ in range(n_samples)]
+        neighbour_count = [np.count_nonzero((u > 0) & (u < radius)) for u in D]
+
         for r, Mr in enumerate(M):
             # sender
             #plt.scatter(Mr[:, 0], Mr[:, 1], label=f"particles of {r}")
+            
             for u, Mu in enumerate(M): # skip anchors?
                 # receiver
                 if u in anchor_list:
@@ -328,38 +333,38 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
                     m_ru[r, u] = kde
                     # kde constructed with particles of r to evaluate resampled particles of u
 
-                    mask = (D[u] > 0) & (D[u] < radius)
-                    neigbour_count = np.count_nonzero(mask)
-                    new_n_particles = (n_particles*k) // neigbour_count
+                    new_n_particles = kn_particles[u] // neighbour_count[u]
+                    kn_particles[u] -= new_n_particles
+                    neighbour_count[u] -= 1
+
                     sampled_particles = kde.resample(new_n_particles).T
-                    M_new[n_anchors - u].append(sampled_particles)
+                    M_new[u].append(sampled_particles)
                     # We still need x_ru for anchors because they send messages
                 #plt.show()
+
         for qq, Mu_new in enumerate(M_new):
-            print("Test: ", len(Mu_new))
             if len(Mu_new) != 0:
                 M_new[qq] = np.concatenate(Mu_new)
 
         for u, Mu_new in enumerate(M_new): # skip anchors?
             # receiver
-            u += n_anchors
+            if u in anchor_list:
+                continue
 
             q = []
             p = []
-            for v, Mv in enumerate(M): # if has no neighbour?
+            for v, Mv in enumerate(M): # if has no neighbour? keep this M or use something else or dont update at ln381
                 # sender
-                if u != v and D[u, v] != 0:
+                if D[u, v] != 0:
                     if D[u, v] < radius:
                         m_vu = m_ru[v, u](Mu_new.T) # Mu_new is the sampled particles from u's neighbour kde's
+                        # m_ru[v, u] is the kde constructed with particles of v (r == v) with distance to u
                         q.append(m_vu)
                     else:
-                        if v in anchor_list:
-                            pd = detection_probability(Mu_new, anchors[v], radius)
-                        else:
-                            pd = np.array([np.sum(weights[v] * detection_probability(Mv, xu, radius)) for xu in Mu_new])
+                        pd = np.array([np.sum(weights[v] * detection_probability(Mv, xu, radius)) for xu in Mu_new])
                         m_vu = 1 - pd
                     # m_vu is messages of particles from v to u
-                    # m_ru[v, u] is the kde constructed with particles of v (r == v) with distance to u
+                    
                     p.append(m_vu)
                     #new_messages[u, v] = m_vu # message that u receives from v
         
@@ -368,19 +373,8 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
 
             W_u = proposal_product / proposal_sum
             W_u /= W_u.sum()
-            print("p: ", proposal_product.shape)
-            print("q: ", proposal_sum.shape)
-            print("wu: ", W_u.shape)
-            print("Mu_new: ", Mu_new.shape)
 
-            mask = (D[u] > 0) & (D[u] < radius)
-            neigbour_count = np.count_nonzero(mask)
-            new_n_particles = (n_particles*k) // neigbour_count
-            print("neighbours: ", neigbour_count)
-            print("particles: ", new_n_particles)
-
-            idxs = np.arange(new_n_particles * neigbour_count)
-            print(new_n_particles * neigbour_count)
+            idxs = np.arange(k*n_particles)
             indices = np.random.choice(idxs, size=n_particles, replace=True, p=W_u)
 
             M[u] = Mu_new[indices]
@@ -409,14 +403,14 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
             plt.show()
 
         
-np.random.seed(42)
-n, d = 16, 2
-m = 50
-p = 30
-r = 20
-a = 5
+#np.random.seed(42)
+n, d = 38, 2
+m = 100
+p = 150
+r = 25
+a = 7
 i = 10
-k = 2
+k = 3
 area = np.array([0, m, 0, m])
 X =  np.empty((n, d))
 bbox = area.reshape(-1, 2)
