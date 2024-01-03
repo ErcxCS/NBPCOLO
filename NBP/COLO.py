@@ -206,7 +206,9 @@ def plot_preds(X_true: np.ndarray, X_preds: np.ndarray, anchors: np.ndarray):
     plt.scatter(X_true[:, 0], X_true[:, 1], label="true_")
 
 def detection_probability(Xt: np.ndarray, xu: np.ndarray, radius: int):
-    return np.exp(np.linalg.norm(Xt - xu, axis=1)**2 / (-2 * radius**2))
+    dp = np.exp(np.linalg.norm(Xt - xu, axis=1)**2 / (-2 * radius**2))
+    dp /= dp.sum()
+    return dp
 
 import open3d as o3d
 
@@ -310,23 +312,15 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
                 if u in anchor_list:
                     continue
                 if r != u and D[r, u] != 0 and D[r, u] < radius:
-                    v = np.random.normal(0, 2, size=n_particles)*0
+                    v = np.random.normal(0, 2, size=n_particles)*1
                     thetas = np.random.uniform(0, 2*np.pi, size=n_particles)
                     cos_u = (D[r, u] + v) * np.cos(thetas)
                     sin_u = (D[r, u] + v) * np.sin(thetas)
                     x_ru = Mr + np.column_stack([cos_u, sin_u])
 
-                    pd = detection_probability(x_ru, weighted_means[n_anchors - u], radius)
+                    pd = detection_probability(x_ru, weighted_means[u - n_anchors], radius)
                     w_ru = pd * (weights[r] / messages[r, u])
                     w_ru /= w_ru.sum()
-
-                    """ plt.scatter(X[u, 0], X[u, 1], label="node u", c="r", marker='*')
-                    plt.scatter(X[r, 0], X[r, 1], label="node r", c="g", marker="+")
-                    plt.annotate(f"target {u}", X[u])
-
-                    plt.scatter(x_ru[:, 0], x_ru[:, 1], marker=".", s=10)
-                    for j, p in enumerate(x_ru):
-                        plt.annotate("{:.2f}".format(w_ru[j]), p) """
 
                     kde = gaussian_kde(x_ru.T, weights=w_ru, bw_method='silverman')
                     m_ru[r, u] = kde
@@ -338,21 +332,37 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
 
                     sampled_particles = kde.resample(new_n_particles).T
                     M_new[u].append(sampled_particles)
-                    # We still need x_ru for anchors because they send messages
-                #plt.show()
+
+                    """ if u not in anchor_list and r not in anchor_list:
+
+                        plt.scatter(X[u, 0], X[u, 1], label="node u", c="r", marker='*')
+                        plt.scatter(X[r, 0], X[r, 1], label="node r", c="g", marker="+")
+                        plt.annotate(f"receiver {u}", X[u])
+                        plt.annotate(f"sender {r}", X[r])
+
+                        plt.scatter(x_ru[:, 0], x_ru[:, 1], marker=".", s=45, c="b", label="kde")
+                        plt.scatter(Mu[:, 0], Mu[:, 1], marker=".", s=45, c="pink", label=f"particles of {u}")
+                        plt.scatter(Mr[:, 0], Mr[:, 1], marker=".", s=45, c="orange", label=f"particles of {r}")
+
+                        plt.scatter(sampled_particles[:, 0], sampled_particles[:, 1], marker=".", s=55, c="c", label="sampels")
+                        #for j, p in enumerate(x_ru):
+                        #    plt.annotate("{:.2f}".format(w_ru[j]), p)
+                        # We still need x_ru for anchors because they send messages
+                        plt.legend()
+                        plt.show() """
 
         for qq, Mu_new in enumerate(M_new):
             if len(Mu_new) != 0:
                 M_new[qq] = np.concatenate(Mu_new)
 
         M_temp = M.copy()
-        nnew_messages = dict()
+        weights_temp = weights.copy()
         for u, Mu_new in enumerate(M_new): # skip anchors?
             # receiver
             if u in anchor_list:
                 continue
-            nnew_messages[u] = dict()
-            
+
+            incoming_message = dict()
             q = []
             p = []
             for v, Mv in enumerate(M_temp): # if has no neighbour? keep this M or use something else or dont update at ln381
@@ -361,18 +371,23 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
                     if D[u, v] < radius:
                         m_vu = m_ru[v, u](Mu_new.T) # Mu_new is the sampled particles from u's neighbour kde's
                         # m_ru[v, u] is the kde constructed with particles of v (r == v) with distance to u
+                        m_vu /= m_vu.sum()
                         q.append(m_vu)
                     else:
-                        pd = np.array([np.sum(weights[v] * detection_probability(Mv, xu, radius)) for xu in Mu_new])
-                        m_vu = 1 - pd
+                        pd = np.array([1 - np.sum(weights_temp[v] * detection_probability(Mv, xu, radius)) for xu in Mu_new])
+                        m_vu = pd
+                        m_vu /= m_vu.sum()
                     # m_vu is messages of particles from v to u
                     
                     p.append(m_vu)
-                    nnew_messages[u][v] = m_vu
+                    incoming_message[v] = m_vu
                     #new_messages[u, v] = m_vu # message that u receives from v
             
             proposal_product = np.prod(p, axis=0)
+            proposal_product /= proposal_product.sum()
             proposal_sum = np.sum(q, axis=0)
+            proposal_sum /= proposal_sum.sum()
+            
             W_u = proposal_product / proposal_sum
             W_u *= mono_potential_bbox(intersections[u])(Mu_new)
             W_u /= W_u.sum()
@@ -389,29 +404,40 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
             M[u] = Mu_new[indices]
             weights[u] = W_u[indices] #???
             weights[u] /= weights[u].sum()
+            for neighbour, message in incoming_message.items():
+                messages[u, neighbour] = message[indices]
+                messages[u, neighbour] /= messages[u, neighbour].sum()
             #messages[u] = new_messages[u, :, indices].T
 
         weighted_means = np.einsum('ijk,ij->ik', M[n_anchors:], weights[n_anchors:])
         _rmse.append(rmse(X[n_anchors:], weighted_means))
-        if (iter + 1) % 10 == 0:
+        if (iter + 1) % 5 == 0:
             plt.plot(np.arange(iter + 1),  _rmse)
             plt.show()
             plt.scatter(anchors[:, 0], anchors[:, 1], label="anchors", c="r", marker='*') # anchors nodes
             plt.scatter(X[n_anchors:, 0], X[n_anchors:, 1], label="true", c="g", marker='P') # target nodes
             plt.scatter(weighted_means[:, 0], weighted_means[:, 1], label="preds", c="y", marker="X") # preds
             plt.plot([X[n_anchors:, 0], weighted_means[:, 0]], [X[n_anchors:, 1], weighted_means[:, 1]], "k--")
+
+            for counter in range(n_anchors, n_samples):
+
+                bbox = intersections[counter]
+                xmin, xmax, ymin, ymax = bbox
+                plt.scatter(M[counter, :, 0], M[counter, :, 1], s=8)
+                plt.plot([xmin, xmax, xmax, xmin, xmin], [ymin, ymin, ymax, ymax, ymin])
+
             plt.legend()
             plt.show()
 
         
-np.random.seed(42)
-n, d = 26, 2
+#np.random.seed(42)
+n, d = 42, 2
 m = 100
-p = 150
+p = 120
 r = 40
-a = 4
+a = 5
 i = 100
-k = 4
+k = 3
 area = np.array([0, m, 0, m])
 X =  np.empty((n, d))
 bbox = area.reshape(-1, 2)
@@ -459,7 +485,7 @@ for graph, ax, title in zip([GGG, G, GG], axs, titles):
 # Show the plot
 plt.show()
 
-iterative_NBP(D=two_hop, X=X, anchors=X[:a], deployment_area=np.array([0, m, 0, m]), n_particles=p, n_iter=i, k=k, radius=r)
+iterative_NBP(D=two_hop, X=X, anchors=X[:a], deployment_area=area, n_particles=p, n_iter=i, k=k, radius=r)
 #print(np.exp( (-1/2 * (10**2))/ (5**2)))
 
                     
