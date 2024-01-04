@@ -192,6 +192,7 @@ def generate_particles(intersections: np.ndarray, anchors: np.ndarray, n_particl
 
     # Generate particles and calculate prior beliefs
     for i in range(n_anchors, n_samples):
+        #intersections[i] = np.array([0, m, 0, m])
         bbox = intersections[i].reshape(-1, 2)
         for j in range(d):
             all_particles[i, :, j] = np.random.uniform(bbox[j, 0], bbox[j, 1], size=n_particles)
@@ -371,12 +372,10 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
                     if D[u, v] < radius:
                         m_vu = m_ru[v, u](Mu_new.T) # Mu_new is the sampled particles from u's neighbour kde's
                         # m_ru[v, u] is the kde constructed with particles of v (r == v) with distance to u
-                        m_vu /= m_vu.sum()
                         q.append(m_vu)
                     else:
                         pd = np.array([1 - np.sum(weights_temp[v] * detection_probability(Mv, xu, radius)) for xu in Mu_new])
                         m_vu = pd
-                        m_vu /= m_vu.sum()
                     # m_vu is messages of particles from v to u
                     
                     p.append(m_vu)
@@ -384,9 +383,7 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
                     #new_messages[u, v] = m_vu # message that u receives from v
             
             proposal_product = np.prod(p, axis=0)
-            proposal_product /= proposal_product.sum()
             proposal_sum = np.sum(q, axis=0)
-            proposal_sum /= proposal_sum.sum()
             
             W_u = proposal_product / proposal_sum
             W_u *= mono_potential_bbox(intersections[u])(Mu_new)
@@ -406,11 +403,11 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
             weights[u] /= weights[u].sum()
             for neighbour, message in incoming_message.items():
                 messages[u, neighbour] = message[indices]
-                messages[u, neighbour] /= messages[u, neighbour].sum()
             #messages[u] = new_messages[u, :, indices].T
 
         weighted_means = np.einsum('ijk,ij->ik', M[n_anchors:], weights[n_anchors:])
         _rmse.append(rmse(X[n_anchors:], weighted_means))
+        print(f"rmse: {_rmse[-1]}")
         if (iter + 1) % 5 == 0:
             plt.plot(np.arange(iter + 1),  _rmse)
             plt.show()
@@ -431,11 +428,11 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
 
         
 #np.random.seed(42)
-n, d = 42, 2
-m = 100
-p = 120
-r = 40
-a = 5
+n, d = 32, 2
+m = 50
+p = 200
+r = 20
+a = 3
 i = 100
 k = 3
 area = np.array([0, m, 0, m])
@@ -477,6 +474,7 @@ titles = ["Fully Connected", "1-hop", "2-hop"]
 
 # Draw the edges, labels, and scatter plot for each graph on its respective subplot
 for graph, ax, title in zip([GGG, G, GG], axs, titles):
+    ax.scatter(X[:a, 0], X[:a, 1], marker="*", c="r")
     nx.draw_networkx_edges(graph, pos=X, ax=ax, width=0.5)
     #nx.draw_networkx_labels(graph, X, ax=ax)
     #ax.scatter(X[:, 0], X[:, 1])
@@ -484,9 +482,10 @@ for graph, ax, title in zip([GGG, G, GG], axs, titles):
 
 # Show the plot
 plt.show()
-
+mst = nx.minimum_spanning_tree(G=G, weight="weight")
+print(np.count_nonzero(D, axis=0))
 iterative_NBP(D=two_hop, X=X, anchors=X[:a], deployment_area=area, n_particles=p, n_iter=i, k=k, radius=r)
-#print(np.exp( (-1/2 * (10**2))/ (5**2)))
+
 
                     
 
