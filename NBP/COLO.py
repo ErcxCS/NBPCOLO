@@ -1,7 +1,7 @@
 import numpy as np
 from sklearn.metrics import euclidean_distances
 from matplotlib import pyplot as plt
-from scipy.stats import norm, gaussian_kde
+from scipy.stats import norm, gaussian_kde, uniform
 from _COLO import *
 
 def create_bbox(D: np.ndarray, anchors: np.ndarray, limits: np.ndarray):
@@ -120,8 +120,8 @@ class NBP:
         self._deployment_area = deployment_area
         self._D = get_distance_matrix(X_true, noise=None)
         self._communication_range = communication_range
-        self._networks = get_graphs(self.D, communication_range)
-        self._n_samples = self.X_true.shape[0]
+        self._networks = get_graphs(self._D, communication_range)
+        self._n_samples = self._X_true.shape[0]
         self._n_anchors, self._d_dim = self._anchors.shape
         self._anchor_list = list(range(self._n_anchors))
 
@@ -133,37 +133,73 @@ class NBP:
 
         assert network_type in ["full", "one", "two"]
         self.n_particles = n_particles
-        self.graph_true = self._networks[network_type]
-        self.intersections = create_bbox(D=self.graph_true, anchors=self._anchors, limits=self._deployment_area)
-        M, prior_beliefs = generate_particles(self.intersections, self._anchors, self.n_particles) # generate from center
+        self.graph = self._networks[network_type]
+        self.intersections = create_bbox(D=self.graph, anchors=self._anchors, limits=self._deployment_area)
+        all_particles, prior_beliefs = generate_particles(self.intersections, self._anchors, self.n_particles) # generate from center
 
         self.kn_particles = [k * n_particles for _ in range(self._n_samples)]
-        self.neighbour_count = [np.count_nonzero((edge > 0) & (edge < communication_range)) for edge in self.graph_true]
+        self.neighbour_count = [np.count_nonzero((edge > 0) & (edge < self._communication_range)) for edge in self.graph]
         
         messages = np.ones((self._n_samples, self._n_samples, self.n_particles))
-        weights = prior_beliefs / np.sum(prior_beliefs=prior_beliefs, keepdims=True)
+        weights = prior_beliefs / np.sum(prior_beliefs, keepdims=True)
         _rmse = []
         for iter in range(n_iter):
-            self._iterative_NBP()
-    
-    def _iterative_NBP(self, all_particles: np.ndarray, messages: np.ndarray, weights: np.ndarray):
+            self._iterative_NBP(all_particles, messages, weights, iter)
+
+
+    def _iterative_NBP(self, all_particles: np.ndarray, messages: np.ndarray, weights: np.ndarray, iter: int):
         kde_ru = dict()
-        new_particles = [[] for i in range(self._n_samples)]
         initial_guesses = np.einsum('ijk,ij->ik', all_particles, weights)
 
+        for sender_r, particles_r in enumerate(all_particles): # r sender
+            for receiver_u, particles_u in enumerate(all_particles): # u receiver
+                d_ru = self.graph[sender_r, receiver_u]
 
+                if receiver_u in self._anchor_list or sender_r == receiver_u or d_ru == 0:
+                    continue
+                if d_ru <= self._communication_range:
+                    
 
+                    if iter == 0:
+                        theta = np.random.uniform(0, 2*np.pi, size=self.n_particles)
+                        x = d_ru * np.cos(theta)
+                        y = d_ru * np.sin(theta)
+                        d_xy = np.column_stack([x, y])
+                    else:
+                        dist_ur = particles_u - particles_r
+                        angle_samples = np.arctan2(dist_ur[:, 1], dist_ur[:, 0])
+                        kde = gaussian_kde(angle_samples.T)
+                        samples = kde.resample(self.n_particles).T
+                        samples = np.mod(samples + np.pi, 2*np.pi) - np.pi
+                        if sender_r in self._anchor_list:
+                            particle_noise = np.random.normal(0, 1, size=self.n_particles) * 1
+                        else:
+                            particle_noise = 0
+                        print(d_ru)
+                        cos_u = (d_ru + particle_noise).reshape(-1, 1) * np.cos(samples)
+                        sin_u = (d_ru + particle_noise).reshape(-1, 1) * np.sin(samples)
+                        d_xy = np.column_stack([cos_u, sin_u])
 
+                    x_ru = particles_r + d_xy
+                    if iter != 0 and sender_r not in self._anchor_list and receiver_u not in self._anchor_list:
+                        plt.scatter(self._X_true[sender_r, 0], self._X_true[sender_r, 1], c='r', label=f"true pos of {sender_r}")
+                        plt.scatter(self._X_true[receiver_u, 0], self._X_true[receiver_u, 1], c='r', label=f"true pos of {receiver_u}")
+                        plt.scatter(particles_r[:, 0], particles_r[:, 1], label=f"particle of sender {sender_r}")
+                        plt.scatter(particles_u[:, 0], particles_u[:, 1], label=f"particle of receiver {receiver_u}")
+                        plt.scatter(x_ru[:, 0], x_ru[:, 1], label=f"kde of sender {sender_r}")
+                        plt.legend()
+                        plt.title(f"distance between {sender_r} and {receiver_u} is {d_ru}")
+                        plt.show()
 
+                    detection_prob = detection_probability(x_ru, initial_guesses[receiver_u], self._communication_range)
+                    w_ru = detection_prob * (weights[sender_r] / messages[sender_r, receiver_u])
+                    w_ru /= w_ru.sum()
 
-       
+                    kde_ru[sender_r, receiver_u] = gaussian_kde(dataset=x_ru.T, weights=w_ru, bw_method='silverman')
+                else:
+                    kde_ru[sender_r, receiver_u] = lambda: 1 - np.sum(weights[sender_r] * detection_probability(particles_r, initial_guesses[receiver_u])) 
 
-
-        
-        
-
-
-
+                    
 def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
                   deployment_area: np.ndarray, n_particles: int, n_iter: int, k: int, radius: int):
     """
@@ -258,21 +294,16 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
                     
                     v = np.random.normal(0, 1, size=n_particles)*0
                     thetas = np.random.uniform(0, 2*np.pi, size=n_particles)
-                    """ if iter != 0:
+                    if iter != 0:
                         qqq = (D[r, u] + v).reshape(-1, 1) *np.arctan2(Mu, Mr)
                         x_ru = Mr + qqq
-                    else: """
-                    cos_u = (D[r, u] + v) * np.cos(thetas)
-                    sin_u = (D[r, u] + v) * np.sin(thetas)
-                    x_ru = Mr + np.column_stack([cos_u, sin_u])
-                    plt.scatter(x_ru[:, 0], x_ru[:, 1], label="x_ru")
-                    plt.scatter(Mr[:, 0], Mr[:, 1], label="Mr")
-                    plt.show()
+                    else:
+                        cos_u = (D[r, u] + v) * np.cos(thetas)
+                        sin_u = (D[r, u] + v) * np.sin(thetas)
+                        x_ru = Mr + np.column_stack([cos_u, sin_u])
                 
                     pd = detection_probability(x_ru, weighted_means[u - n_anchors], radius)
-                    
                     w_ru = pd * (weights[r] / messages[r, u])
-
                     w_ru /= w_ru.sum()
 
                     kde = gaussian_kde(x_ru.T, weights=w_ru, bw_method='silverman')
@@ -409,7 +440,7 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
             plt.show()
         #weights = weights_temp
 
-seed = 21
+seed = None
 np.random.seed(seed)
 n, d = 50, 2
 m = 100
@@ -439,6 +470,9 @@ area = np.array([0, m, 0, m])
 D = get_distance_matrix(X_true, noise=None)
 graphs = get_graphs(D, communication_range=r)
 plot_networks(X_true, a, graphs)
-network = graphs['one_hop']
+network = graphs['one']
 
-iterative_NBP(D=network, X=X_true, anchors=X_true[:a], deployment_area=area, n_particles=p, n_iter=i, k=k, radius=r)
+#iterative_NBP(D=network, X=X_true, anchors=X_true[:a], deployment_area=area, n_particles=p, n_iter=i, k=k, radius=r)
+
+nbp = NBP(X_true=X_true, n_anchors=a, deployment_area=area, communication_range=r)
+nbp.iterative_NBP(network_type="one", n_particles=100, k=5, n_iter=100)

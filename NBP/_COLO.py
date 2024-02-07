@@ -170,10 +170,10 @@ def get_distance_matrix(X_true: np.ndarray, noise=.2) -> np.ndarray:
 
 def get_graphs(D: np.ndarray, communication_range) -> dict:
     graphs = {}
-    graphs["fully_connected"] = D
+    graphs["full"] = D
     one_hop = D.copy()
     one_hop[one_hop > communication_range] = 0
-    graphs["one_hop"] = one_hop
+    graphs["one"] = one_hop
 
     G = nx.from_numpy_array(one_hop)
     two_hop = one_hop.copy()
@@ -181,7 +181,7 @@ def get_graphs(D: np.ndarray, communication_range) -> dict:
         for q, _ in paths.items():
             two_hop[j, q] = nx.shortest_path_length(G, j, q, weight='weight')
     
-    graphs["two_hop"] = two_hop
+    graphs["two"] = two_hop
     return graphs
 
 def plot_networks(X_true:np.ndarray, n_anchors: int, graphs: dict):
@@ -194,19 +194,26 @@ def plot_networks(X_true:np.ndarray, n_anchors: int, graphs: dict):
 
 
 
-X = np.array([
+""" X = np.array([
     [2, 2],
     [8, 8]
 ])
-
-y = np.zeros((2, 10, 2))
+p = 50
+y = np.zeros((2, p, 2))
 g = 1
 for i in range(len(X)):
-    y[i] = np.random.uniform(X[i, 0] - g, X[i, 0] + g, size=(10, 2))
+    y[i] = np.random.uniform(X[i, 0] - g, X[i, 0] + g, size=(p, 2))
     plt.scatter(y[i, :, 0], y[i, :, 1])
 plt.scatter(X[:, 0], X[:, 1], color="red")
-t = np.arctan2(y[0], y[1])
 
-y[0]  += 10 * t
-plt.scatter(y[0, :, 0], y[0, :, 1])
+
+#angle_samples = np.arctan2(y[0, :, 1], y[0, :, 0]) - np.arctan2(y[1, :, 1], y[1, :, 0])
+yy = y[1] - y[0]
+angle_samples = np.arctan2(yy[:, 1], yy[:, 0])
+kde = gaussian_kde(angle_samples.T)
+samples = kde.resample(p).T
+samples = np.mod(samples + np.pi, 2*np.pi) - np.pi
+x_ru = y[0] + np.column_stack([8*+np.cos(samples), 8*np.sin(samples)])
+plt.scatter(x_ru[:, 0], x_ru[:, 1])
 plt.show()
+ """
