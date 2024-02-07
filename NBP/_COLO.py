@@ -194,9 +194,19 @@ def plot_networks(X_true:np.ndarray, n_anchors: int, graphs: dict):
 
 
 
-""" seed = None
-np.random.seed(seed)
-X_true = generate_targets(seed=seed, shape=(20,2))
-D = get_distance_matrix(X_true, noise=None)
-graphs = get_graphs(D, 40)
-plot_networks(X_true, 6, graphs) """
+X = np.array([
+    [2, 2],
+    [8, 8]
+])
+
+y = np.zeros((2, 10, 2))
+g = 1
+for i in range(len(X)):
+    y[i] = np.random.uniform(X[i, 0] - g, X[i, 0] + g, size=(10, 2))
+    plt.scatter(y[i, :, 0], y[i, :, 1])
+plt.scatter(X[:, 0], X[:, 1], color="red")
+t = np.arctan2(y[0], y[1])
+
+y[0]  += 10 * t
+plt.scatter(y[0, :, 0], y[0, :, 1])
+plt.show()

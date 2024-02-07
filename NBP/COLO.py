@@ -85,8 +85,8 @@ def generate_particles(intersections: np.ndarray, anchors: np.ndarray, n_particl
         #intersections[i] = np.array([0, m, 0, m])
         bbox = intersections[i].reshape(-1, 2)
         for j in range(d):
-            all_particles[i, :, j] = np.random.uniform(0, m, size=n_particles)
-            #all_particles[i, :, j] = np.random.uniform(bbox[j, 0], bbox[j, 1], size=n_particles)
+            #all_particles[i, :, j] = np.random.uniform(0, m, size=n_particles)
+            all_particles[i, :, j] = np.random.uniform(bbox[j, 0], bbox[j, 1], size=n_particles)
         prior_beliefs[i] = mono_potential_bbox(intersections[i])(all_particles[i])
 
     return all_particles, prior_beliefs
@@ -258,6 +258,9 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
                     cos_u = (D[r, u] + v) * np.cos(thetas)
                     sin_u = (D[r, u] + v) * np.sin(thetas)
                     x_ru = Mr + np.column_stack([cos_u, sin_u])
+                    plt.scatter(x_ru[:, 0], x_ru[:, 1], label="x_ru")
+                    plt.scatter(Mr[:, 0], Mr[:, 1], label="Mr")
+                    plt.show()
                 
                     pd = detection_probability(x_ru, weighted_means[u - n_anchors], radius)
                     
@@ -269,20 +272,6 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
                     m_ru[r, u] = kde
                     # kde constructed with particles of r to evaluate resampled particles of u
 
-                    # Equation (11) is:
-                    # Covar[m_tu^(i)] = sum_i,j w_tu^(i) w_tu^(j) (m_tu^(i) - m_bar) (m_tu^(i) - m_bar)^T
-                    # Calculate m_bar
-                    m_bar = np.sum(w_ru[:, np.newaxis] * x_ru, axis=0) / np.sum(w_ru)
-
-                    # Calculate Covar[m_tu^(i)]
-                    covar_matrix = np.zeros((2, 2))
-
-                    for i in range(len(w_ru)):
-                        diff = x_ru[i] - m_bar
-                        covar_matrix += w_ru[i] * np.outer(diff, diff)
-
-                    #print(covar_matrix * (len(w_ru)-(len(anchors)))**(-1/3))
-
                     new_n_particles = kn_particles[u] // neighbour_count[u]
                     kn_particles[u] -= new_n_particles
                     neighbour_count[u] -= 1
@@ -290,8 +279,7 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
                     sampled_particles = kde.resample(new_n_particles).T
                     M_new[u].append(sampled_particles)
                     #print(anchor_list, u, r)
-                    if u not in anchor_list and r not in anchor_list:
-                        print("AAAAAAAAAAAAAAAA")
+                    """ if u not in anchor_list and r not in anchor_list:
                         plt.scatter(X[u, 0], X[u, 1], label="node u", c="r", marker='*')
                         plt.scatter(X[r, 0], X[r, 1], label="node r", c="g", marker="+")
                         plt.annotate(f"receiver {u}", X[u])
@@ -307,7 +295,7 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
                         # We still need x_ru for anchors because they send messages
                         
                         plt.legend()
-                        plt.show()
+                        plt.show() """
                    
         for qq, Mu_new in enumerate(M_new):
             if len(Mu_new) != 0:
@@ -352,7 +340,7 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
             proposal_sum = np.sum(q, axis=0)
             
             W_u = proposal_product / proposal_sum
-            #W_u *= mono_potential_bbox(intersections[u])(Mu_new)
+            W_u *= mono_potential_bbox(intersections[u])(Mu_new)
             W_u /= W_u.sum()
             
             """ bbox = intersections[u]
