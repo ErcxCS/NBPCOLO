@@ -113,47 +113,54 @@ def detection_probability(X_r: np.ndarray, x_u: np.ndarray, radius: int):
     dp /= dp.sum()
     return dp
 
-def _iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
-                  deployment_area: np.ndarray, n_particles: int, n_iter: int, k: int, radius: int):
-    """
-    iterative Nonparametric Belief Propagation for Cooperative Localization task.
+class NBP:
+    def __init__(self, X_true: np.ndarray, n_anchors: int, deployment_area: np.ndarray, communication_range: int) -> None:
+        self._X_true = X_true
+        self._anchors = self._X_true[:n_anchors]
+        self._deployment_area = deployment_area
+        self._D = get_distance_matrix(X_true, noise=None)
+        self._communication_range = communication_range
+        self._networks = get_graphs(self.D, communication_range)
+        self._n_samples = self.X_true.shape[0]
+        self._n_anchors, self._d_dim = self._anchors.shape
+        self._anchor_list = list(range(self._n_anchors))
 
-    Parameters
-    --
-    D: array_like, (n_samples, n_samples) shaped
-        square measured euclidean distance matrix. Distances from each node to every other node. First n_anchors are the anchor nodes.
-    X: array_like, (n_samples, d_dim) shaped
-        True positions of nodes we are trying to localize. Used for comparison only. First n_anchors are the anchor nodes.
-    anchors: array_like, (n_anchors, d_dim) shaped
-        Nodes which we know their true locations. These are first n_anchors from X
-    deployment_area: array_like, (d_dim*2,) shaped
-        when deployment area is a square with length m, deployment_area is = np.array([0, m, 0, m]) = (x_min, x_max, y_min, y_max)
-    n_particles: int
-        number of particles for each sample in X
-    n_iter: int
-        number of iterations
-    k: Mixture Importance Sampling parameter
+    def iterative_NBP(self, network_type: str, n_particles: int, k: int, n_iter: int=100, communication_range: int=None):
+        if communication_range is not None:
+            assert communication_range > 0, "Communication range must be greater than zero"
+            self._communication_range = communication_range
+            self._networks = get_graphs(self.D, communication_range)
 
-    Returns
-    --
-    pred_X: array_like, (n_anchors:n_samples, d_dim) shaped
-        Estimated locations X[n_anchors:n_samples] after n_iter iterations
-    """
+        assert network_type in ["full", "one", "two"]
+        self.n_particles = n_particles
+        self.graph_true = self._networks[network_type]
+        self.intersections = create_bbox(D=self.graph_true, anchors=self._anchors, limits=self._deployment_area)
+        M, prior_beliefs = generate_particles(self.intersections, self._anchors, self.n_particles) # generate from center
 
-    n_samples = D.shape[0] # number of nodes in the graph
-    n_anchors, d_dim = anchors.shape # number of anchors
-    n_targets = n_samples - n_anchors # number of nodes to localize
-    anchor_list = list(range(n_anchors)) # first n nodes are the anchors
-
-    intersections = create_bbox(D, anchors, limits=deployment_area)
-    M, prior_befliefs = generate_particles(intersections, anchors, n_particles)
+        self.kn_particles = [k * n_particles for _ in range(self._n_samples)]
+        self.neighbour_count = [np.count_nonzero((edge > 0) & (edge < communication_range)) for edge in self.graph_true]
+        
+        messages = np.ones((self._n_samples, self._n_samples, self.n_particles))
+        weights = prior_beliefs / np.sum(prior_beliefs=prior_beliefs, keepdims=True)
+        _rmse = []
+        for iter in range(n_iter):
+            self._iterative_NBP()
     
-    messages = np.ones((n_samples, n_samples, n_particles))
-    new_messages = np.ones((n_samples, n_samples, k*n_particles))
-    weights = prior_befliefs / np.sum(prior_befliefs, axis=1, keepdims=True)
+    def _iterative_NBP(self, all_particles: np.ndarray, messages: np.ndarray, weights: np.ndarray):
+        kde_ru = dict()
+        new_particles = [[] for i in range(self._n_samples)]
+        initial_guesses = np.einsum('ijk,ij->ik', all_particles, weights)
 
-    _rmse = []
 
+
+
+
+
+       
+
+
+        
+        
 
 
 
