@@ -4,6 +4,7 @@ from matplotlib import pyplot as plt
 from scipy.stats import norm, gaussian_kde
 import networkx as nx
 
+
 def RMSE(targets: np.ndarray, predicts: np.ndarray):
     """
     Returns the Root Mean Squared Error (RMSE) between two sets of targets and predictions.
@@ -183,6 +184,20 @@ def get_graphs(D: np.ndarray, communication_range) -> dict:
     
     graphs["two"] = two_hop
     return graphs
+
+def relative_spread(nbp, particles_u: np.ndarray, particles_r: np.ndarray, d_ru: float):
+    dist_ur = particles_u - particles_r
+    angle_samples = np.arctan2(dist_ur[:, 1], dist_ur[:, 0])
+    kde = gaussian_kde(angle_samples.T)
+    samples = kde.resample(nbp.n_particles).T
+    samples = np.mod(samples + np.pi, 2*np.pi) - np.pi
+    particle_noise = np.random.normal(0, 1, size=nbp.n_particles) * 1
+    cos_u = (d_ru + particle_noise).reshape(-1, 1) * np.cos(samples)
+    sin_u = (d_ru + particle_noise).reshape(-1, 1) * np.sin(samples)
+    d_xy = np.column_stack([cos_u, sin_u])
+    return d_xy
+
+    
 
 def plot_networks(X_true:np.ndarray, n_anchors: int, graphs: dict):
     fig, axs = plt.subplots(len(graphs), 1,  sharex=True, sharey=True, figsize=(6, 18))
