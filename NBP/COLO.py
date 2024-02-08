@@ -132,43 +132,100 @@ class NBP:
             self._networks = get_graphs(self.D, communication_range)
 
         assert network_type in ["full", "one", "two"]
-        self.n_particles = n_particles
+
         self.graph = self._networks[network_type]
         self.intersections = create_bbox(D=self.graph, anchors=self._anchors, limits=self._deployment_area)
-        all_particles, prior_beliefs = generate_particles(self.intersections, self._anchors, self.n_particles) # generate from center
-
-        self.kn_particles = [k * n_particles for _ in range(self._n_samples)]
-        self.neighbour_count = [np.count_nonzero((edge > 0) & (edge < self._communication_range)) for edge in self.graph]
+        self.all_particles, self.prior_beliefs = generate_particles(self.intersections, self._anchors, n_particles) # generate from center
         
-        messages = np.ones((self._n_samples, self._n_samples, self.n_particles))
-        weights = prior_beliefs / np.sum(prior_beliefs, keepdims=True)
+        self.messages = np.ones((self._n_samples, self._n_samples, n_particles))
+        self.weights = self.prior_beliefs / np.sum(self.prior_beliefs, keepdims=True)
         _rmse = []
         for iter in range(n_iter):
-            self._iterative_NBP(all_particles, messages, weights)
+            kde_ru = self.compute_messages(self.messages, self.weights)
+            self.compute_beliefs(kde_ru, n_particles=n_particles, k=k)
+            guesses = np.einsum('ijk,ij->ik', self.all_particles[self._n_anchors:], self.weights[self._n_anchors:])
+            _rmse.append(RMSE(self._X_true[self._n_anchors:], guesses))
+            print(f"rmse: {_rmse[-1]}")
 
-    def _iterative_NBP(self, all_particles: np.ndarray, messages: np.ndarray, weights: np.ndarray):
+            plt.plot(np.arange(iter + 1), _rmse)
+            plt.ylabel("RMSE")
+            plt.xlabel("iteration")
+            plt.show()
+
+            plt.scatter(self._X_true[:, 0], self._X_true[:, 1], c="g", marker="P", label="true", s=50)
+            plt.scatter(self._anchors[:, 0], self._anchors[:, 1], c="r", marker="*", label="anchors", s=50)
+            plt.scatter(guesses[:, 0], guesses[:, 1], c="y", marker="X", label="predicts", s=50)
+            plt.plot([self._X_true[self._n_anchors:, 0], guesses[:, 0]], [self._X_true[self._n_anchors:, 1], guesses[:, 1]], "k--")
+        
+            for counter in range(self._n_anchors, self._n_samples):
+                bbox = self.intersections[counter]
+                xmin, xmax, ymin, ymax = bbox
+                plt.scatter(self.all_particles[counter, :, 0], self.all_particles[counter, :, 1], s=8)
+                plt.plot([xmin, xmax, xmax, xmin, xmin], [ymin, ymin, ymax, ymax, ymin])
+            plt.legend()
+            plt.show()
+
+
+    def compute_messages(self, messages: np.ndarray, weights: np.ndarray):
         kde_ru = dict()
-        initial_guesses = np.einsum('ijk,ij->ik', all_particles, weights)
+        initial_guesses = np.einsum('ijk,ij->ik', self.all_particles, weights)
 
-        for sender_r, particles_r in enumerate(all_particles): # r sender
-            for receiver_u, particles_u in enumerate(all_particles): # u receiver
+        for sender_r, particles_r in enumerate(self.all_particles): # r sender
+            for receiver_u, particles_u in enumerate(self.all_particles): # u receiver
                 d_ru = self.graph[sender_r, receiver_u]
                 if receiver_u in self._anchor_list or sender_r == receiver_u or d_ru == 0:
                     continue
 
                 if d_ru <= self._communication_range:
-                    d_xy = relative_spread(self, particles_u, particles_r, d_ru)
+                    d_xy = relative_spread(particles_u, particles_r, d_ru)
                     x_ru = particles_r + d_xy
                     detection_prob = detection_probability(x_ru, initial_guesses[receiver_u], self._communication_range)
                     w_ru = detection_prob * (weights[sender_r] / messages[sender_r, receiver_u])
                     w_ru /= w_ru.sum()
+                    
                     kde_ru[sender_r, receiver_u] = gaussian_kde(dataset=x_ru.T, weights=w_ru, bw_method='silverman')
+
                 else:
-                    kde_ru[sender_r, receiver_u] = lambda: 1 - np.sum(weights[sender_r] * detection_probability(particles_r, initial_guesses[receiver_u]))
+                    kde_ru[sender_r, receiver_u] = lambda: 1 - weights[sender_r] @ detection_probability(particles_r, initial_guesses[receiver_u], radius=self._communication_range).T # not correct
+        return kde_ru
 
-    def compute_messages(self):
-        pass
+    def compute_beliefs(self, kde_ru: dict, n_particles: int, k: int):
+        temp_particles = self.all_particles.copy()
+        for receiver_u in range(self._n_samples):
+            if receiver_u in self._anchor_list:
+                continue
+            new_particles = draw_particles(self, receiver_u=receiver_u, kde_ru=kde_ru, n_particles=n_particles, k=k)
 
+            q = []
+            p = []
+            incoming_message = dict()
+            for sender_v in range(self._n_samples):
+                d_vu = self.graph[receiver_u, sender_v]
+                if receiver_u == sender_v or d_vu == 0:
+                    continue
+                
+                if d_vu <= self._communication_range:
+                    m_vu = kde_ru[sender_v, receiver_u](new_particles.T)
+                    q.append(m_vu)
+                else:
+                    m_vu = kde_ru[sender_v, receiver_u]()
+                p.append(m_vu)
+                incoming_message[sender_v] = m_vu
+            
+            proposal_product = np.prod(p, axis=0)
+            proposal_sum = np.sum(q, axis=0)
+
+            W_u = proposal_product / proposal_sum
+            W_u /= W_u.sum()
+
+            idxs = np.arange(k*n_particles)
+            indicies = np.random.choice(idxs, size=n_particles, replace=True, p=W_u)
+
+            self.all_particles[receiver_u] = new_particles[indicies]
+            self.weights[receiver_u] = W_u[indicies]
+            self.weights[receiver_u] /= self.weights[receiver_u].sum()
+            for neighbour, message in incoming_message.items():
+                self.messages[receiver_u, neighbour] = message[indicies]
 
 
     def _plot_kde_particle_spread(self, x_ru: np.ndarray, all_particles, node_r: int, node_u: int, d_ru: int):
@@ -216,7 +273,6 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
     intersections = create_bbox(D, anchors, limits=deployment_area)
     M, prior_beliefs = generate_particles(intersections, anchors, n_particles)
     messages = np.ones((n_samples, n_samples, n_particles))
-    print(prior_beliefs)
     new_messages = np.ones((n_samples, n_samples, k*n_particles))
     weights = prior_beliefs / np.sum(prior_beliefs, axis=1, keepdims=True)
 
@@ -274,11 +330,16 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
                     continue
                 if r != u and D[r, u] != 0 and D[r, u] <= radius:
                     
-                    v = np.random.normal(0, 1, size=n_particles)*0
-                    thetas = np.random.uniform(0, 2*np.pi, size=n_particles)
-                    cos_u = (D[r, u] + v) * np.cos(thetas)
-                    sin_u = (D[r, u] + v) * np.sin(thetas)
-                    x_ru = Mr + np.column_stack([cos_u, sin_u])
+                    if iter % 5 == 0:
+                        v = np.random.normal(0, 1, size=n_particles)*0
+                        thetas = np.random.uniform(0, 2*np.pi, size=n_particles)
+                        cos_u = (D[r, u] + v) * np.cos(thetas)
+                        sin_u = (D[r, u] + v) * np.sin(thetas)
+                        x_ru = Mr + np.column_stack([cos_u, sin_u])
+                    else:
+
+                        d_xy = relative_spread(Mu, Mr, D[r, u])
+                        x_ru = Mr + d_xy
                 
                     pd = detection_probability(x_ru, weighted_means[u - n_anchors], radius)
                     w_ru = pd * (weights[r] / messages[r, u])
@@ -425,11 +486,11 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
 
 seed = 17
 np.random.seed(seed)
-n, d = 50, 2
+n, d = 30, 2
 m = 100
 p = 100
-r = 28
-a = 5
+r = 25
+a = 4
 i = 100
 k = 5
 
@@ -439,7 +500,7 @@ X_true, area = generate_targets(seed=seed,
                           n_anchors=a,
                           show=False)
 
-X_true = np.array([
+""" X_true = np.array([
     [m/5, m*1/3],
     [m/5-10, m*2/3-10],
     [m*4/5, m*1/3+15],
@@ -449,13 +510,13 @@ X_true = np.array([
     [m*2/4-2, m*2/4],
     [m*3/5, m*3/5]
 ])
-area = np.array([0, m, 0, m])
+area = np.array([0, m, 0, m]) """
 D = get_distance_matrix(X_true, noise=None)
 graphs = get_graphs(D, communication_range=r)
 plot_networks(X_true, a, graphs)
-network = graphs['one']
+network = graphs['two']
 
 iterative_NBP(D=network, X=X_true, anchors=X_true[:a], deployment_area=area, n_particles=p, n_iter=i, k=k, radius=r)
 
 #nbp = NBP(X_true=X_true, n_anchors=a, deployment_area=area, communication_range=r)
-#nbp.iterative_NBP(network_type="one", n_particles=100, k=5, n_iter=100)
+#nbp.iterative_NBP(network_type="one", n_particles=p, k=k, n_iter=i)

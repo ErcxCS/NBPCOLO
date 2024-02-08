@@ -185,18 +185,35 @@ def get_graphs(D: np.ndarray, communication_range) -> dict:
     graphs["two"] = two_hop
     return graphs
 
-def relative_spread(nbp, particles_u: np.ndarray, particles_r: np.ndarray, d_ru: float):
+def relative_spread(particles_u: np.ndarray, particles_r: np.ndarray, d_ru: float):
     dist_ur = particles_u - particles_r
     angle_samples = np.arctan2(dist_ur[:, 1], dist_ur[:, 0])
     kde = gaussian_kde(angle_samples.T)
-    samples = kde.resample(nbp.n_particles).T
+    samples = kde.resample(particles_u.shape[0]).T
     samples = np.mod(samples + np.pi, 2*np.pi) - np.pi
-    particle_noise = np.random.normal(0, 1, size=nbp.n_particles) * 1
+    particle_noise = np.random.normal(0, 1, size=particles_u.shape[0]) * 1
     cos_u = (d_ru + particle_noise).reshape(-1, 1) * np.cos(samples)
     sin_u = (d_ru + particle_noise).reshape(-1, 1) * np.sin(samples)
     d_xy = np.column_stack([cos_u, sin_u])
     return d_xy
 
+def draw_particles(nbp, receiver_u: int, kde_ru: dict, n_particles: int, k: int):
+    sampled_particles = []
+    kn_particles = k * n_particles
+    node = nbp.graph[receiver_u]
+    neighbour_count = np.count_nonzero((node > 0) & (node < nbp._communication_range))
+    for sender_r in  range(nbp._n_samples):
+        d_ur = nbp.graph[receiver_u, sender_r]
+        if receiver_u == sender_r or d_ur == 0:
+            continue
+        if  d_ur <= nbp._communication_range:
+            new_n_particles = kn_particles // neighbour_count
+            kn_particles -= new_n_particles
+            neighbour_count -= 1
+
+            drawn_samples = kde_ru[sender_r, receiver_u].resample(new_n_particles).T
+            sampled_particles.append(drawn_samples)
+    return np.concatenate(sampled_particles)
     
 
 def plot_networks(X_true:np.ndarray, n_anchors: int, graphs: dict):
