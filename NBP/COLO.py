@@ -3,33 +3,41 @@ from sklearn.metrics import euclidean_distances
 from matplotlib import pyplot as plt
 from scipy.stats import norm, gaussian_kde, uniform
 from _COLO import *
+from scipy.spatial import procrustes
+import seaborn as sns
+import pandas
+from Main import ClassicMDS
+import matplotlib.patches as mpatches
+from matplotlib.patches import Circle
+from matplotlib.cm import ScalarMappable
+from matplotlib.colors import Normalize
+import cProfile
 
-def create_bbox(D: np.ndarray, anchors: np.ndarray, limits: np.ndarray):
-    """
-    Creates intersecting bounded boxes for n samples from distances to anchor nodes
+""" folder_small = "large_scale1"
+folder_big = "results_big"
+folder = folder_small
+hop_1 = "1hop"
+hop_2 = "2hop"
+hop = hop_1
+window_big = (-55, 55)
+window_small = (5, 85)
+window = window_small """
 
-    Parameters
-    --
-    D: array_like
-        (n_samples, n_samples) Measured distance matrix between samples. First len(anchors) are distances of anchors to all others
-    anchors: array_like
-        (n_samples, d) shaped known locations of anchors
-    limits: array_like: [dx_min, dx_max, dy_min, dy_max]
-        limits of the bounded boxes for all samples.
-        Represents deployment area when limits.shape[0] == 1, will be applied for all samples.
-        if anchors.shape[1] == 3, each bbox will be represented with 8 elements, representing limits in 3D
-    
-    Returns
-    --
-    bbox: array_like
-        bounded box for n_samples
-    """
+def create_bbox(D: np.ndarray, anchors: np.ndarray, limits: np.ndarray, radius: int):
+
     n_samples = D.shape[0]
     n_anchors, d = anchors.shape
     bboxes = np.zeros((n_samples, n_anchors, 2*d))
     intersection_bboxes = np.zeros((n_samples, 2*d))
     # Figure out a way to center the target nodes
+    gap = 0
     for i in range(n_samples):
+        if i < n_anchors:
+            for k in range(d):
+                intersection_bboxes[i, 2*k] = max(anchors[i, k] - radius, limits[2*k])
+                intersection_bboxes[i, 2*k+1] = min(anchors[i, k] + radius, limits[2*k+1])
+            continue
+
         for j in range(n_anchors):
             if i == j or D[i, j] == 0:
                 bboxes[i, j] = limits
@@ -42,10 +50,15 @@ def create_bbox(D: np.ndarray, anchors: np.ndarray, limits: np.ndarray):
             intersection_bboxes[i, 2*k] = np.max(bboxes[i, :, k*2], axis=0)
             intersection_bboxes[i, 2*k+1] = np.min(bboxes[i, :, k*2+1], axis=0)
 
+            if intersection_bboxes[i, 2*k] > intersection_bboxes[i, 2*k+1]:
+                intersection_bboxes[i, 2*k], intersection_bboxes[i, 2*k+1] = intersection_bboxes[i, 2*k+1], intersection_bboxes[i, 2*k]
         
-    return intersection_bboxes
+            if intersection_bboxes[i, 2*k+1] - intersection_bboxes[i, 2*k] < gap:
+                intersection_bboxes[i, 2*k] -= gap
+                intersection_bboxes[i, 2*k+1] += gap
+    return intersection_bboxes, bboxes
 
-def generate_particles(intersections: np.ndarray, anchors: np.ndarray, n_particles: int):
+def generate_particles(intersections: np.ndarray, anchors: np.ndarray, n_particles: int, priors, mm):
     """
     Generates particles from intersections of bounded boxes for each target sample
 
@@ -82,7 +95,9 @@ def generate_particles(intersections: np.ndarray, anchors: np.ndarray, n_particl
 
     # Generate particles from bboxes and calculate prior beliefs
     for i in range(n_anchors, n_samples):
-        #intersections[i] = np.array([-m/2, m/2, -m/2, m/2])
+        if not priors:
+            intersections[i] = np.array([-mm/2, mm/2, -mm/2, mm/2])
+        #intersections[i] = np.array([0, m, 0, m])
         bbox = intersections[i].reshape(-1, 2)
         for j in range(d):
             #all_particles[i, :, j] = np.random.uniform(0, m, size=n_particles)
@@ -92,155 +107,19 @@ def generate_particles(intersections: np.ndarray, anchors: np.ndarray, n_particl
     return all_particles, prior_beliefs
 
 
-def detection_probability(X_r: np.ndarray, x_u: np.ndarray, radius: int):
-    """
-    Compute the probability that a node with center `xu` is present at each particle of node t
-    Parameters
-    ----------
-    X_r : array_like, shape (n_particles, 2)
-        The coordinates of the particles representing node t
-    x_u : array_like, shape (2, )
-        The coordinate of the query point u
-    radius : int
-        Radius of the circular region around u to consider
-    Returns
-    -------
-    probabilities : array_like, shape (n_particles, )
-        Probabilities associated with each particle of node t
-    """
-    # Should radius be max communication range or distance between node r and node u, d_ru?
-    dp = np.exp(-np.linalg.norm(X_r - x_u, axis=1)**2 / (2*radius**2))
-    dp /= dp.sum()
+def detection_probability(X_r: np.ndarray, x_u: np.ndarray, radius: int, dist):
+    #print(X_r, x_u)
+    """ if dist is not None:
+        dp = np.exp(-(np.abs(dist - np.linalg.norm(X_r - x_u, axis=1))**2 / (2*radius**2)))
+    else: """
+    dp = np.exp(-(np.linalg.norm(X_r - x_u, axis=1)**2 / (2*radius**2)))
     return dp
 
-class NBP:
-    def __init__(self, X_true: np.ndarray, n_anchors: int, deployment_area: np.ndarray, communication_range: int) -> None:
-        self._X_true = X_true
-        self._anchors = self._X_true[:n_anchors]
-        self._deployment_area = deployment_area
-        self._D = get_distance_matrix(X_true, noise=None)
-        self._communication_range = communication_range
-        self._networks = get_graphs(self._D, communication_range)
-        self._n_samples = self._X_true.shape[0]
-        self._n_anchors, self._d_dim = self._anchors.shape
-        self._anchor_list = list(range(self._n_anchors))
-
-    def iterative_NBP(self, network_type: str, n_particles: int, k: int, n_iter: int=100, communication_range: int=None):
-        if communication_range is not None:
-            assert communication_range > 0, "Communication range must be greater than zero"
-            self._communication_range = communication_range
-            self._networks = get_graphs(self.D, communication_range)
-
-        assert network_type in ["full", "one", "two"]
-
-        self.graph = self._networks[network_type]
-        self.intersections = create_bbox(D=self.graph, anchors=self._anchors, limits=self._deployment_area)
-        self.all_particles, self.prior_beliefs = generate_particles(self.intersections, self._anchors, n_particles) # generate from center
-        
-        self.messages = np.ones((self._n_samples, self._n_samples, n_particles))
-        self.weights = self.prior_beliefs / np.sum(self.prior_beliefs, keepdims=True)
-        _rmse = []
-        for iter in range(n_iter):
-            kde_ru = self.compute_messages(self.messages, self.weights)
-            self.compute_beliefs(kde_ru, n_particles=n_particles, k=k)
-            guesses = np.einsum('ijk,ij->ik', self.all_particles[self._n_anchors:], self.weights[self._n_anchors:])
-            _rmse.append(RMSE(self._X_true[self._n_anchors:], guesses))
-            print(f"rmse: {_rmse[-1]}")
-
-            plt.plot(np.arange(iter + 1), _rmse)
-            plt.ylabel("RMSE")
-            plt.xlabel("iteration")
-            plt.show()
-
-            plt.scatter(self._X_true[:, 0], self._X_true[:, 1], c="g", marker="P", label="true", s=50)
-            plt.scatter(self._anchors[:, 0], self._anchors[:, 1], c="r", marker="*", label="anchors", s=50)
-            plt.scatter(guesses[:, 0], guesses[:, 1], c="y", marker="X", label="predicts", s=50)
-            plt.plot([self._X_true[self._n_anchors:, 0], guesses[:, 0]], [self._X_true[self._n_anchors:, 1], guesses[:, 1]], "k--")
-        
-            for counter in range(self._n_anchors, self._n_samples):
-                bbox = self.intersections[counter]
-                xmin, xmax, ymin, ymax = bbox
-                plt.scatter(self.all_particles[counter, :, 0], self.all_particles[counter, :, 1], s=8)
-                plt.plot([xmin, xmax, xmax, xmin, xmin], [ymin, ymin, ymax, ymax, ymin])
-            plt.legend()
-            plt.show()
 
 
-    def compute_messages(self, messages: np.ndarray, weights: np.ndarray):
-        kde_ru = dict()
-        initial_guesses = np.einsum('ijk,ij->ik', self.all_particles, weights)
-
-        for sender_r, particles_r in enumerate(self.all_particles): # r sender
-            for receiver_u, particles_u in enumerate(self.all_particles): # u receiver
-                d_ru = self.graph[sender_r, receiver_u]
-                if receiver_u in self._anchor_list or sender_r == receiver_u or d_ru == 0:
-                    continue
-
-                if d_ru <= self._communication_range:
-                    d_xy = relative_spread(particles_u, particles_r, d_ru)
-                    x_ru = particles_r + d_xy
-                    detection_prob = detection_probability(x_ru, initial_guesses[receiver_u], self._communication_range)
-                    w_ru = detection_prob * (weights[sender_r] / messages[sender_r, receiver_u])
-                    w_ru /= w_ru.sum()
-                    
-                    kde_ru[sender_r, receiver_u] = gaussian_kde(dataset=x_ru.T, weights=w_ru, bw_method='silverman')
-
-                else:
-                    kde_ru[sender_r, receiver_u] = lambda: 1 - weights[sender_r] @ detection_probability(particles_r, initial_guesses[receiver_u], radius=self._communication_range).T # not correct
-        return kde_ru
-
-    def compute_beliefs(self, kde_ru: dict, n_particles: int, k: int):
-        temp_particles = self.all_particles.copy()
-        for receiver_u in range(self._n_samples):
-            if receiver_u in self._anchor_list:
-                continue
-            new_particles = draw_particles(self, receiver_u=receiver_u, kde_ru=kde_ru, n_particles=n_particles, k=k)
-
-            q = []
-            p = []
-            incoming_message = dict()
-            for sender_v in range(self._n_samples):
-                d_vu = self.graph[receiver_u, sender_v]
-                if receiver_u == sender_v or d_vu == 0:
-                    continue
-                
-                if d_vu <= self._communication_range:
-                    m_vu = kde_ru[sender_v, receiver_u](new_particles.T)
-                    q.append(m_vu)
-                else:
-                    m_vu = kde_ru[sender_v, receiver_u]()
-                p.append(m_vu)
-                incoming_message[sender_v] = m_vu
-            
-            proposal_product = np.prod(p, axis=0)
-            proposal_sum = np.sum(q, axis=0)
-
-            W_u = proposal_product / proposal_sum
-            W_u /= W_u.sum()
-
-            idxs = np.arange(k*n_particles)
-            indicies = np.random.choice(idxs, size=n_particles, replace=True, p=W_u)
-
-            self.all_particles[receiver_u] = new_particles[indicies]
-            self.weights[receiver_u] = W_u[indicies]
-            self.weights[receiver_u] /= self.weights[receiver_u].sum()
-            for neighbour, message in incoming_message.items():
-                self.messages[receiver_u, neighbour] = message[indicies]
-
-
-    def _plot_kde_particle_spread(self, x_ru: np.ndarray, all_particles, node_r: int, node_u: int, d_ru: int):
-        """Plot the KDE particle spread from a given node to other node"""
-        plt.scatter(self._X_true[node_r, 0], self._X_true[node_r, 1], c='r', label=f"true pos of {node_r}")
-        plt.scatter(self._X_true[node_u, 0], self._X_true[node_u, 1], c='r', label=f"true pos of {node_u}")
-        plt.scatter(all_particles[node_r, :, 0], all_particles[node_r, :, 1], label=f"particle of sender {node_r}")
-        plt.scatter(all_particles[node_u, :, 0], all_particles[node_u, :, 1], label=f"particle of receiver {node_u}")
-        plt.scatter(x_ru[:, 0], x_ru[:, 1], label=f"kde of sender {node_r}")
-        plt.legend()
-        plt.title(f"distance between {node_r} and {node_u} is {d_ru}")
-        plt.show()
-                    
-def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
-                  deployment_area: np.ndarray, n_particles: int, n_iter: int, k: int, radius: int):
+def iterative_NBP(D: np.ndarray, B:np.ndarray, X: np.ndarray, anchors: np.ndarray,
+                  deployment_area: np.ndarray, n_particles: int, n_iter: int,
+                    k: int, radius: int, nn_noise: float, benchmark, priors, indices_hop):
     """
     iterative Nonparametric Belief Propagation for Cooperative Localization task.
 
@@ -267,119 +146,102 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
     """
     n_samples = D.shape[0] # number of nodes in the graph
     n_anchors, d_dim = anchors.shape # number of anchors
-    n_targets = n_samples - n_anchors # number of nodes to localize
     anchor_list = list(range(n_anchors)) # first n nodes are the anchors
     
-    intersections = create_bbox(D, anchors, limits=deployment_area)
-    M, prior_beliefs = generate_particles(intersections, anchors, n_particles)
+    intersections, bboxes = create_bbox(D, anchors, limits=deployment_area, radius=radius)
+    mm = deployment_area[0] * -2
+    M, prior_beliefs = generate_particles(intersections, anchors, n_particles, priors, mm)
     messages = np.ones((n_samples, n_samples, n_particles))
-    new_messages = np.ones((n_samples, n_samples, k*n_particles))
     weights = prior_beliefs / np.sum(prior_beliefs, axis=1, keepdims=True)
 
-    _rmse = []
+    init_particles = M.copy()
+
+    #plot_priors(X, D, 3, anchors, intersections=intersections, bboxes=bboxes, color="red")
+    #plot_rings(X, anchors, D, intersections, radius, 4)
+    #plot_gaussian_ring(X, a, D)
+    plot_MRF(X, B, n_anchors, D, radius, intersections)
+    #ax = plot_detection_model(X, D, 4, anchors, radius, intersections)
+    #plot_initial_particles_MRF(X, M, weights, n_anchors, D, radius, intersections)
+    """ x_D = D*B
+    J = calculate_jacobian(X, x_D)
+    FIM = calculate_fim(J, nn_noise**2)
+    #FIM = calculate_fim(J, 0.1)
+    CRLB = np.linalg.inv(FIM)
+    variances = np.diag(CRLB)
+    overall_crlb = np.sqrt(np.sum(variances))
+    print(f"CRLB: {overall_crlb}")
+    reshaped = variances.reshape(-1, 2)
+    summed = np.sum(reshaped, axis=1) """
+
+    #print(f"max idx: {summed.argmax()}, {summed.max()}")
+    #benchmark = max(overall_crlb, benchmark)
+
     
+    KLs = dict()
+    for i in range(n_anchors, D.shape[0]):
+        KLs[i] = list()
+
+    _rmse = []
+    _similarities = []
+    plot_rmse = []
+    uncertainties_dict = {i: [] for i in range(M.shape[0] - n_anchors)}
+    overall_uncertainties_list = []
+    overall_uncertainties_dict = {}
+    error_dict = {}
+    folder = "non-sufficient_connectivity"
     # we have different prior beliefs for each node, however we do not use them
     # anywhere, we normalize weights, because all priors are the same, all weights
     # for all particles of all nodes will be the same.
-    
+
     for iter in range(n_iter):
-        if iter == 0:
-            weighted_means = np.einsum('ijk,ij->ik', M[n_anchors:], prior_beliefs[n_anchors:])
-        else:
-            weighted_means = np.einsum('ijk,ij->ik', M[n_anchors:], weights[n_anchors:])
-        #weighted_means = np.einsum('ijk,ij->ik', M[n_anchors:], weights[n_anchors:])
-        #weighted_means = np.einsum('ijk,ij->ik', M[n_anchors:], prior_beliefs[n_anchors:])
-        ############################ PLOTING #############################################
-        """ plt.scatter(anchors[:, 0], anchors[:, 1], label="anchors", c="r", marker='*') # anchors nodes
-        plt.scatter(X[n_anchors:, 0], X[n_anchors:, 1], label="true", c="g", marker='P') # target nodes
-        plt.scatter(weighted_means[:, 0], weighted_means[:, 1], label="preds", c="y", marker="X") # preds
-        plt.plot([X[n_anchors:, 0], weighted_means[:, 0]], [X[n_anchors:, 1], weighted_means[:, 1]], "k--")
-        for i, xt in enumerate(X):
-
-            if i < n_anchors:
-                plt.annotate(f"A_{i}", xt)
-            else:
-                bbox = intersections[i]
-                xmin, xmax, ymin, ymax = bbox
-                plt.plot([xmin, xmax, xmax, xmin, xmin], [ymin, ymin, ymax, ymax, ymin])
-                plt.scatter(M[i, :, 0], M[i, :, 1], marker=".", s=10)
-                plt.annotate(f"t_{i}", xt)
-                plt.annotate(f"p_{i}", weighted_means[i - n_anchors])
-        plt.legend()
-        plt.title(f"iter: {iter}, Predictions with initial weights")
-    
-
-        plt.show() """
-        ################################################################################
+        #plot_initial_particles(X, D, M, anchors, intersections)
+        weighted_means = np.einsum('ijk,ij->ik', M[n_anchors:], weights[n_anchors:])
+        #plot_results_initial(anchors, X, weighted_means, intersections, M)
         m_ru = dict()
         M_new = [[] for i in range(n_samples)]
-        
+        print(iter)
         kn_particles = [k * n_particles for _ in range(n_samples)]
         #neighbour_count = [np.count_nonzero((u[n_anchors:] > 0) & (u[n_anchors:] < radius)) for u in D]
-        neighbour_count = [np.count_nonzero((u > 0) & (u < radius)) for u in D]
-        print(f"neighbour_count: {neighbour_count}")
-        for r, Mr in enumerate(M):
-            # sender
-            #plt.scatter(Mr[:, 0], Mr[:, 1], label=f"particles of {r}")
-            """ if r in anchor_list:
-                continue """
-            
-            for u, Mu in enumerate(M): # skip anchors?
-                # receiver
+        neighbour_count = [np.count_nonzero(u > 0) for u in B]
+        # print(neighbour_count)
+        for r, Mr in enumerate(M): # sender
+            for u, Mu in enumerate(M): # receiver
                 if u in anchor_list:
                     continue
-                if r != u and D[r, u] != 0 and D[r, u] <= radius:
-                    
-                    if iter % 5 == 0:
-                        v = np.random.normal(0, 1, size=n_particles)*0
-                        thetas = np.random.uniform(0, 2*np.pi, size=n_particles)
-                        cos_u = (D[r, u] + v) * np.cos(thetas)
-                        sin_u = (D[r, u] + v) * np.sin(thetas)
-                        x_ru = Mr + np.column_stack([cos_u, sin_u])
+                if r != u and D[r, u] != 0 and B[r, u] == 1:
+                    if iter == 0: #iter % 3 != 1:#iter == 0 or iter % 4 == 0:
+                        d_xy, w_xy = random_spread(particles_r=Mr, d_ru=D[r, u])
                     else:
+                        d_xy, w_xy = relative_spread(Mu, Mr, D[r, u])
 
-                        d_xy = relative_spread(Mu, Mr, D[r, u])
-                        x_ru = Mr + d_xy
-                
-                    pd = detection_probability(x_ru, weighted_means[u - n_anchors], radius)
-                    w_ru = pd * (weights[r] / messages[r, u])
+                    x_ru = Mr + d_xy
+                    detect_prob = detection_probability(x_ru, weighted_means[u - n_anchors], radius, dist=D[r, u])
+                    w_ru = detect_prob * (weights[r] / messages[r, u]) * (1/w_xy)
                     w_ru /= w_ru.sum()
-
+                    #plot_message_approx(X, D, M, anchors, intersections, x_ru, w_ru, r, u, radius, u_mean=weighted_means[u - n_anchors])
+                    
                     kde = gaussian_kde(x_ru.T, weights=w_ru, bw_method='silverman')
                     m_ru[r, u] = kde
-                    # kde constructed with particles of r to evaluate resampled particles of u
-
+                    #plot_kde_ru(kde, Mu, intersections, u, r, x_ru, w_ru)
+                    
                     new_n_particles = kn_particles[u] // neighbour_count[u]
                     kn_particles[u] -= new_n_particles
                     neighbour_count[u] -= 1
 
                     sampled_particles = kde.resample(new_n_particles).T
                     M_new[u].append(sampled_particles)
-                    #print(anchor_list, u, r)
-                    """ if u not in anchor_list and r not in anchor_list:
-                        plt.scatter(X[u, 0], X[u, 1], label="node u", c="r", marker='*')
-                        plt.scatter(X[r, 0], X[r, 1], label="node r", c="g", marker="+")
-                        plt.annotate(f"receiver {u}", X[u])
-                        plt.annotate(f"sender {r}", X[r])
 
-                        plt.scatter(x_ru[:, 0], x_ru[:, 1], marker=".", s=45, c="b", label="kde")
-                        plt.scatter(Mu[:, 0], Mu[:, 1], marker=".", s=45, c="pink", label=f"particles of {u}")
-                        plt.scatter(Mr[:, 0], Mr[:, 1], marker=".", s=45, c="orange", label=f"particles of {r}")
-
-                        plt.scatter(sampled_particles[:, 0], sampled_particles[:, 1], marker=".", s=55, c="c", label="sampels")
-                        for j, p in enumerate(x_ru):
-                            plt.annotate("{:.2f}".format(w_ru[j]), p)
-                        # We still need x_ru for anchors because they send messages
-                        
-                        plt.legend()
-                        plt.show() """
-                   
+                    #plot_sampling_from_kde_ur(anchor_list, u, r, X, x_ru, Mu, Mr, sampled_particles, w_ru)
+    
+        MM_new = M_new.copy()
         for qq, Mu_new in enumerate(M_new):
             if len(Mu_new) != 0:
                 M_new[qq] = np.concatenate(Mu_new)
 
         M_temp = M.copy()
         weights_temp = weights.copy()
+        #plot_all_messages(D, B, radius, m_ru, 4, init_particles, weights, X, n_anchors)
+        #plot_belief_update(all_particles=M, messages=m_ru, node_of_interest= 4)
         for u, Mu_new in enumerate(M_new): # skip anchors?
             # receiver
             if u in anchor_list:
@@ -388,135 +250,279 @@ def iterative_NBP(D: np.ndarray, X: np.ndarray, anchors: np.ndarray,
             incoming_message = dict()
             q = []
             p = []
-            for v, Mv in enumerate(M_temp): # if has no neighbour? keep this M or use something else or dont update at ln381
+            for v, Mv in enumerate(M_temp):
                 # sender
                 if D[u, v] != 0:
-                    if D[u, v] < radius:
-                        """ if v in anchor_list:
-                            pd = np.array([np.sum(weights_temp[v] * detection_probability(Mv, xu, radius)) for xu in Mu_new])
-                            m_vu = pd * duo_potential(Mu_new, Mv[0], D[v, u], np.var(Mu_new))
-                            
-                        else: """
+                    if B[u, v] == 1:
                         m_vu = m_ru[v, u](Mu_new.T) # Mu_new is the sampled particles from u's neighbour kde's
-                        """ pd = np.array([np.sum(weights_temp[v] * detection_probability(Mv, xu, radius)) for xu in Mu_new])
-                        m_vu = pd * duo_potential(Mu_new, Mv[0], D[v, u], np.var(Mu_new)) """
-                            
-                        #m_vu *= np.array([np.sum(weights_temp[v] * detection_probability(Mv, xu, radius)) for xu in Mu_new]) 
-                        # m_ru[v, u] is the kde constructed with particles of v (r == v) with distance to u
                         q.append(m_vu)
                     else:
-                        pd = np.array([1 - np.sum(weights_temp[v] * detection_probability(Mv, xu, radius)) for xu in Mu_new])
+                        pd = np.array([1 - np.sum(weights_temp[v] * detection_probability(xu, Mv, radius, None)) for xu in Mu_new])
                         m_vu = pd
                     # m_vu is messages of particles from v to u
                     
+
                     p.append(m_vu)
                     incoming_message[v] = m_vu
-                    #new_messages[u, v] = m_vu # message that u receives from v
             
             proposal_product = np.prod(p, axis=0)
             proposal_sum = np.sum(q, axis=0)
-            
             W_u = proposal_product / proposal_sum
-            #W_u *= mono_potential_bbox(intersections[u])(Mu_new)
+            """ WW_u = W_u.copy()
+            WW_u *= mono_potential_bbox(intersections[u])(Mu_new)
+            WW_u /= WW_u.sum() """
             W_u /= W_u.sum()
+            
         
             idxs = np.arange(k*n_particles)
             try:
                 indices = np.random.choice(idxs, size=n_particles, replace=True, p=W_u)
             except:
-                print(f"iteration: {iter}, u: {u}")
-                bbox = intersections[u]
-                xmin, xmax, ymin, ymax = bbox
-                plt.scatter(X[u, 0], X[u, 1], c='r', s=9, label=f"true {u} pos")
-                plt.scatter(Mu_new[:, 0], Mu_new[:, 1], s=9, label=f"particles of {u}")
-                plt.scatter(Mu_new[indices, 0], Mu_new[indices, 1], s=9, label=f"choosen particles of M{u}_new")
-                plt.plot([xmin, xmax, xmax, xmin, xmin], [ymin, ymin, ymax, ymax, ymin])
-                plt.title(f"Particles of {u}")
-                plt.show()
+                print(intersections[u])
+                plot_exception(W_u, u, intersections, X, Mu_new, indices)
+                
                 return
 
             M[u] = Mu_new[indices]
             weights[u] = W_u[indices] #???
             weights[u] /= weights[u].sum()
+            """ kde_M = gaussian_kde(M[u].T, bw_method='silverman', weights=weights[u])
+            M[u] = kde_M.resample(n_particles).T
+            weights[u] = kde_M(M[u].T)
+            weights[u] /= weights[u].sum() """
 
-            """ bbox = intersections[u]
-            xmin, xmax, ymin, ymax = bbox
-            plt.scatter(M[u, :, 0], M[u, :, 1], s=9, label=f"particles of {u}")
-            plt.plot([xmin, xmax, xmax, xmin, xmin], [ymin, ymin, ymax, ymax, ymin])
-            plt.title(f"Sellected particles of {u}")
-            plt.show()
- """
+            #plot_sellected_particles_of(intersections, Mu_new, M, u)
             for neighbour, message in incoming_message.items():
                 messages[u, neighbour] = message[indices]
-            #messages[u] = new_messages[u, :, indices].T
+            
+            
+            """ prev_particles = M_temp[u]
+            prev_weights = weights_temp[u]
+            prev_u_belief = gaussian_kde(dataset=prev_particles.T, weights=prev_weights, bw_method="silverman")
+            evals = prev_u_belief(M[u].T)
+            KL = np.sum(weights[u] * np.log(weights[u]/evals)) """
+            
+            """ if iter == 0:
+                KLs[u] += [KL]
+            elif KLs[u][-1] > KL:
+                KLs[u] += KL
+            else:
+                anchor_list.append(u) """
+
+        
+        #plot_message_kde(X, M, D, m_ru, anchors, 7, radius, MM_new, weights)
 
         weighted_means = np.einsum('ijk,ij->ik', M[n_anchors:], weights[n_anchors:])
-        _rmse.append(RMSE(X[n_anchors:], weighted_means))
-        print(f"rmse: {_rmse[-1]}")
-        """ for u, target  in enumerate(M):
-            if u in anchor_list:
-                continue
-            k_kde = gaussian_kde(M[u - n_anchors].T, bw_method='silverman', weights=weights[u])
-            w_weights = k_kde(M_temp[u - n_anchors].T)
-            print(M_temp[u -n_anchors].shape, w_weights.shape)
-            weighted_means[u] = np.average(M_temp[u], weights=w_weights, axis=0)
-        print(weighted_means) """
+        uncertainties, overall_uncertainty = weighted_covariance(particles=M[n_anchors:], weights=weights[n_anchors:], nodes=weighted_means, uncertainties_dict=uncertainties_dict, overall_uncertainties_list=overall_uncertainties_list, iteration=iter)
+        """ overall_uncertainties_dict, error_dict = weighted_covariance_2(
+            particles=M[n_anchors:],
+            weights=weights[n_anchors:],
+            nodes=weighted_means,
+            uncertainties_dict=uncertainties_dict,
+            overall_uncertainties_dict=overall_uncertainties_dict,
+            iteration=iter,
+            indicex=indices_hop,
+            X_true=X[n_anchors:],
+            error_dict=error_dict
+        ) """
+        """ rmse = RMSE(X[n_anchors:], weighted_means)
+        if iter == 0:
+            _rmse.append((rmse, overall_crlb))
+        elif np.abs(_rmse[-1][0] - rmse) < 0.2:
+            _rmse.append((rmse, overall_crlb))
+            plot_RMSE(_rmse, iter+1)
+            plot_results(M, weights, X, weighted_means, anchors, intersections, iter, show_bbox=False)
+            break
+        else:
+            _rmse.append((rmse, overall_crlb)) """
+        
+        _, _, disparity = procrustes(X[n_anchors:], weighted_means)
+        _similarities.append(1 - disparity)
+        rmse, median = RMSE(X[n_anchors:], weighted_means)
+        _rmse.append((rmse, median, benchmark))
+        print(f"rmse: {rmse}")
+        #difference_of_distances(weighted_means, X[n_anchors:], radius, B[n_anchors:, n_anchors:])
+
+        """ if len(plot_rmse) == 0 or _rmse[-1] < plot_rmse[-1]+np.random.normal(0.28, 0.25):
+            plot_rmse.append(_rmse[-1]) """
+        
+        #plot_representation(X, anchors, M, weights, 5)
+        #plot_results(M, weights, X, weighted_means, anchors, intersections, iteration=None, show_bbox=False)
+
         if (iter + 1) % 5 == 0:
-            #print(D[n_anchors:, n_anchors:])
-            #print(euclidean_distances(weighted_means))
-            plt.plot(np.arange(iter + 1),  _rmse)
-            plt.ylabel("RMSE")
-            plt.xlabel("iteration")
-            plt.show()
-            plt.scatter(anchors[:, 0], anchors[:, 1], label="anchors", c="r", marker='*') # anchors nodes
-            plt.scatter(X[n_anchors:, 0], X[n_anchors:, 1], label="true", c="g", marker='P') # target nodes
-            plt.scatter(weighted_means[:, 0], weighted_means[:, 1], label="preds", c="y", marker="X") # preds
-            plt.plot([X[n_anchors:, 0], weighted_means[:, 0]], [X[n_anchors:, 1], weighted_means[:, 1]], "k--",)
+            #print(overall_uncertainties_dict)
+            #plot_uncertainties2(overall_uncertainties_dict, "Uncertainty")
+            #plot_uncertainties2(error_dict, "Erros")
+            #plot_particle_filter(X, 7, M, D)
+            #plot_uncertainties(uncertainties_dict=uncertainties_dict, overall_uncertainties_list=overall_uncertainties_list, n_anchors=anchors.shape[0], ax=None)
+            #plot_proposal_dist(M, weights, X, D)
+            #plot_initial_particles(X, D, M, anchors, intersections)
+            plot_compare_graphs(X, weighted_means, anchors, radius, D, iter, M=M_temp, intersections=intersections)
+            """ plot_RMSE(_rmse, iter+1) # 1-ax
+            plot_results(M, weights, X, weighted_means, anchors, intersections, iter, show_bbox=False, uncertainties=None) # 1-ax
+            if iter == 0:
+                plot_compare_graphs(X, weighted_means, anchors, radius, D, iter, M=M_temp, intersections=intersections) # 2-ax
+            else:
+                plot_compare_graphs(X, weighted_means, anchors, radius, D, iter, M=M, intersections=intersections) # 2-ax
+            
+            plot_procrustes(_similarities, iter+1)# 1-ax
+            plot_uncertainties(uncertainties_dict=uncertainties_dict, overall_uncertainties_list=overall_uncertainties_list)# 1-ax
+            plot_network_error(weighted_means, X, anchors, D, B)# 1-ax
+            plot_network_error(weighted_means, X, anchors, D, np.ones_like(D))# 1-ax """
+            #plot_all(iter, M, weights, X, weighted_means, anchors, intersections, radius, D, B, _rmse, _similarities, uncertainties_dict, overall_uncertainties_list, M_temp, folder)
+            save_individual_plots(iter, M, weights, X, weighted_means, anchors, intersections, radius, D, B, _rmse, _similarities, uncertainties_dict, overall_uncertainties_list, M_temp, folder)
+            #plot_compare_graphs(X, weighted_means, anchors, radius, D, iter, intersections=intersections)
+            #plot_results(M, weights, X, weighted_means, anchors, intersections, iteration=None, show_bbox=False)
+            #plot_simple_once(X, anchors, D, weighted_means)
+            
+                
+            #plot_probabilistic_vs_deterministic(X, anchors, weights, weighted_means, M)
+            #plot_proposal_distributions(X, 7, M, D, m_ru, MM_new)
+                
+    #plot_RMSE(_rmse, len(_rmse))
+    #plot_RMSE(plot_rmse, len(plot_rmse))
             
 
-            for counter in range(n_anchors, n_samples):
-                bbox = intersections[counter]
-                xmin, xmax, ymin, ymax = bbox
-                plt.scatter(M[counter, :, 0], M[counter, :, 1], s=8)
-                plt.plot([xmin, xmax, xmax, xmin, xmin], [ymin, ymin, ymax, ymax, ymin])
+    return _rmse
 
-            plt.legend()
-            plt.show()
-        #weights = weights_temp
 
-seed = 17
-np.random.seed(seed)
-n, d = 30, 2
-m = 100
-p = 100
-r = 25
-a = 4
-i = 100
-k = 5
+def plot_networks(X_true:np.ndarray, n_anchors: int, graphs: dict):
+    fig, axs = plt.subplots(len(graphs), 1,  sharex=True, sharey=True, figsize=(6, 6))
+    for (title, graph), ax in zip(graphs.items(), axs):
+        ax.scatter(X_true[:n_anchors, 0], X_true[:n_anchors, 1], marker="*", c="r", label="anchors")
+        ax.scatter(X_true[n_anchors:, 0], X_true[n_anchors:, 1], marker="+", c="g", label="true")
+        nx.draw_networkx_edges(nx.from_numpy_array(graph), pos=X_true, ax=ax, width=0.5)
+        ax.legend()
+        ax.set_title(title)
+    plt.show()
 
-X_true, area = generate_targets(seed=seed,
-                          shape=(n, d),
-                          deployment_area=m,
-                          n_anchors=a,
-                          show=False)
 
-""" X_true = np.array([
-    [m/5, m*1/3],
-    [m/5-10, m*2/3-10],
-    [m*4/5, m*1/3+15],
-    [m*4/5, m*2/3],
-    [m/2-10, m/2+10],
-    [m*2/5-10, m*2/5],
-    [m*2/4-2, m*2/4],
-    [m*3/5, m*3/5]
-])
-area = np.array([0, m, 0, m]) """
-D = get_distance_matrix(X_true, noise=None)
-graphs = get_graphs(D, communication_range=r)
-plot_networks(X_true, a, graphs)
-network = graphs['two']
 
-iterative_NBP(D=network, X=X_true, anchors=X_true[:a], deployment_area=area, n_particles=p, n_iter=i, k=k, radius=r)
+def increase_distances(distance_matrix, indices, increase_by):
+    N = distance_matrix.shape[0]
+    for i in indices:
+        for j in range(N):
+            if j not in indices and distance_matrix[i, j] != 0:
+                distance_matrix[i, j] += increase_by
+                distance_matrix[j, i] += increase_by
+    return distance_matrix
 
-#nbp = NBP(X_true=X_true, n_anchors=a, deployment_area=area, communication_range=r)
-#nbp.iterative_NBP(network_type="one", n_particles=p, k=k, n_iter=i)
+def sample_gaussian_particles_around_node(uu, p, r):
+    # Standard deviation of the Gaussian distribution
+    sigma = r / 3  # Approximately 99.7% of data within radius r (3-sigma rule)
+    
+    # Generate particles from a Gaussian distribution centered at uu
+    particles = np.random.normal(loc=uu, scale=sigma, size=(p, 2))
+    
+    return particles
+
+def plot_computational_time(seconds_distributed, seconds_centralized, hops):
+    plt.figure(figsize=(8, 6))
+    plt.plot(hops, seconds_distributed, marker='o', linestyle='-', color='b', label='Distributed')
+    plt.plot(hops, seconds_centralized, marker='o', linestyle='-', color='r', label='Centralized')
+    plt.xlabel('Number of Hops', fontsize=14)
+    plt.ylabel('Time (seconds)', fontsize=14)
+    plt.title('Computational Time vs. Number of Hops', fontsize=16)
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.legend(fontsize=12)
+    
+    # Increase the number of ticks on the y-axis
+    #y_ticks = np.linspace(0, 5, 11)  # From 0 to 5 seconds, 11 ticks
+    plt.yticks(fontsize=12)
+    plt.xticks(hops, fontsize=12)
+    
+    plt.tight_layout()
+    plt.show()
+
+if "__main__" == __name__:
+
+    seed = None
+    np.random.seed(seed)
+    n, d = 100, 2
+    m = 100
+    p = 100
+    r = 16
+    a = 7
+    i = 10
+    k = 4
+
+    priors = True
+    nn_noise=1
+
+    X_true, area = generate_targets(seed=seed,
+                            shape=(n, d),
+                            deployment_area=m,
+                            n_anchors=a,
+                            show=False)
+    
+    #X_true[:a] = generate_anchors(deployment_area=area, anchor_count=a)
+
+    """ X_true = np.array([
+        [m/5-5, m*1/3+5],
+        [m/5-10, m*2/3-10],
+        [m*4/5, m*2/3-5],
+        [m*4/5, m*1/3+15],
+        [m*2/5-10, m*2/5+5],
+        [m/2-10, m/2+10],
+        [m*3/5, m*3/5],
+        [m*2/4-1, m*2/4], 
+    ])
+    
+    area = np.array([0, m, 0, m]) """
+
+    generated_anchors = generate_anchors(deployment_area=area, anchor_count=a, border_offset=np.sqrt(m)*1)
+    a = len(generated_anchors)
+    X_true[:a] = generated_anchors
+
+    D, B = get_distance_matrix(X_true, a, noise=nn_noise, communication_radius=r) # noise : 1
+    DD, BB = get_distance_matrix(X_true, a, noise=None, communication_radius=r)
+    graphs = get_graphs(D)
+    graphs_DD = get_graphs(DD)
+    #fig, ax = plt.subplots(1, 2, figsize=(6, 12), sharex=True, sharey=True)
+    """ plot_network(X_true=X_true,
+                 B=B,
+                 n_anchors=a,
+                 r=r,
+                 D=D,
+                 name="True Graph",
+                 subset=-1, ax=ax[0]) """
+
+    network, _, _ = get_n_hop(X_true, D, 2, r, a, 1)
+    _, _, C = get_n_hop(X_true, D, 2, r, a, 1)
+
+    #plot_network(X_true, B, n_anchors=a, r=r, D=network, subset=-1)
+
+    DDD = D*B - DD
+    non_zero = DDD[DDD != 0]
+    benchmark = np.var(non_zero)
+    print(benchmark)
+
+    #seconds_distributed = np.array([1.820, 2.432, 3.331, 3.903])
+    #seconds_centralized = np.array([7.908, 25.440, 46.664, 65.454])
+    #hops = np.array([1, 2, 3, 4])
+    #plot_computational_time(seconds_distributed, seconds_centralized, hops)
+    #C -= B
+    nnn = C[a:, :a].sum(axis=1)
+    indices_hop = {i: np.where(nnn == i)[0] for i in range(5)}
+    print(indices_hop)
+
+    profiler = cProfile.Profile()
+    profiler.enable()
+    iterative_NBP(D=network,
+                   B=B,
+                     X=X_true,
+                       anchors=X_true[:a],
+                         deployment_area=area,
+                           n_particles=p,
+                             n_iter=i, k=k,
+                               radius=r,
+                                 nn_noise=nn_noise,
+                                   benchmark=benchmark,
+                                   priors=priors,
+                                   indices_hop=indices_hop)
+    profiler.disable()
+    profiler.dump_stats(f'profile_data_centralized.prof')
+
+    import pstats
+    p = pstats.Stats(f'profile_data_centralized.prof')
+    p.sort_stats('cumulative').print_stats(5)

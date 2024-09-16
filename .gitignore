@@ -1,0 +1,5 @@
+# Ignore everything inside the NBP folder
+NBP/*
+
+# Do not ignore .py files inside NBP
+!NBP/**/*.py

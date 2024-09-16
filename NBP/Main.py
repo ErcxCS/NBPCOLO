@@ -152,12 +152,38 @@ class ClassicMDS:
         return self.RMSE
 
 
-n, d, r, m, a = 7, 2, 20, 150, 8 #r kullanılmıyor
-noise_mean, noise_std = 0, 5
-seed = 93
-np.random.seed(seed)
+if  __name__ == '__main__':
+    n, d, r, m, a = 8, 2, 20, 100, 4 #r kullanılmıyor
+    noise_mean, noise_std = 0, 3
+    seed = 93
+    np.random.seed(seed)
+    X = np.random.uniform(-m, m, (n, d))
+    X = np.array([
+        [m/5, m*1/3],
+        [m/5-10, m*2/3-10],
+        [m*4/5, m*1/3+15],
+        [m*4/5, m*2/3],
+        [m/2-10, m/2+10],
+        [m*2/5-10, m*2/5],
+        [m*2/4-2, m*2/4],
+        [m*3/5, m*3/5]
+    ])
+    X -= X.mean(axis=0)
 
-#################
+    #start = time.time()
+    #psi = (X @ X.T).diagonal().reshape(-1, 1)
+
+    noise = np.random.normal(noise_mean, noise_std, (n, n))
+    noise -= np.diag(noise.diagonal())
+    D = euclidean_distances(X) + noise
+    #mds = ClassicMDS(corner_anchors=False, d_dimension=2, n_samples=n, m_anchors=a, meters=m, noise=0)
+    mds = ClassicMDS(D=D)
+    X_hat = mds.classic_mds()
+    mds.plot_results(X, X_hat)
+    X_hat_ab = mds.least_squares_registration(anchors=X[:mds.m_anchors].copy(), anchors_hat=X_hat[:mds.m_anchors].copy(), X_hat=X_hat)
+    mds.plot_results(X, X_hat_ab)
+    print(mds.RMSE(X, X_hat_ab))
+        #################
 
 """ X = np.random.uniform(-m, m, (n, d))
 noise = np.random.normal(noise_mean, noise_std, (n, n))
@@ -204,21 +230,7 @@ plt.scatter(Xhat_ab[:, 0], Xhat_ab[:, 1])
 plt.show() """
 #################
 
-X = np.random.uniform(-m, m, (n, d))
 
-#start = time.time()
-#psi = (X @ X.T).diagonal().reshape(-1, 1)
-
-noise = np.random.normal(noise_mean, noise_std, (n, n))
-noise -= np.diag(noise.diagonal())
-D = euclidean_distances(X) + noise
-#mds = ClassicMDS(corner_anchors=False, d_dimension=2, n_samples=n, m_anchors=a, meters=m, noise=0)
-mds = ClassicMDS(D=D)
-X_hat = mds.classic_mds()
-mds.plot_results(X, X_hat)
-X_hat_ab = mds.least_squares_registration(anchors=X[:mds.m_anchors].copy(), anchors_hat=X_hat[:mds.m_anchors].copy(), X_hat=X_hat)
-mds.plot_results(X, X_hat_ab)
-print(mds.RMSE(X, X_hat_ab))
 
 """ D_2 = (D)**2
 
