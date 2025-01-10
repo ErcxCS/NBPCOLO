@@ -6,4 +6,4 @@ NBP/*
 
 *.pyc
 
-NBP/__pycache__
+./NBP/__pycache__
