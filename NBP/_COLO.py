@@ -211,6 +211,7 @@ def get_distance_matrix(X_true: np.ndarray, n_anchors: int, communication_radius
 
     RSS = distance_2_RSS(P_i, D, alpha, d0)
     DD = RSS_2_distance(P_i, RSS, alpha, d0, sigma=noise, add_noise=True)
+    print(RSS)
 
     DD[:n_anchors, :n_anchors] = D[:n_anchors, :n_anchors]
     DD = np.abs(DD) * B
@@ -797,10 +798,10 @@ def plot_network(X_true: np.ndarray, B: np.ndarray,
     pos = {i: (X_true[i][0], X_true[i][1]) for i in range(len(X_true))}
 
     
-    """ two_hop = D.copy()
+    two_hop = D.copy()
     two_hop[two_hop < r] = 0
     # Draw 2-hop neighbor edges (beyond radius r)
-    nx.draw_networkx_edges(nx.from_numpy_array(two_hop), pos, edge_color='blue', width=1.337, alpha=alpha, ax=ax) """
+    #nx.draw_networkx_edges(nx.from_numpy_array(two_hop), pos, edge_color='blue', width=1.337, alpha=alpha, ax=ax)
 
     # Draw immediate neighbor edges (within radius r)
     one_hop = D.copy()
@@ -820,7 +821,7 @@ def plot_network(X_true: np.ndarray, B: np.ndarray,
     #plt.title("1-Hop True Connectivity Network", fontsize=16)
     #plt.title("True Graph", fontsize=16)
     ax.set_title(name, fontsize=16)
-    #plt.show()
+    plt.show()
 
 
 
@@ -1527,7 +1528,7 @@ def plot_representation(X: np.ndarray, anchors: np.ndarray, M: np.ndarray, weigh
 
 
 
-def plot_compare_graphs(X, weighted_means, anchors, communication_radius, D, iteration, M=None, intersections=None, axs=None):
+def plot_compare_graphs(X, B, weighted_means, anchors, communication_radius, D, iteration, M=None, intersections=None, axs=None):
     """
     Compare true and estimated graphs.
     
@@ -1554,15 +1555,15 @@ def plot_compare_graphs(X, weighted_means, anchors, communication_radius, D, ite
         plot_initial_particles(X, D, M, anchors, intersections, ax=axs[0])
     else: """
     axs[0].scatter(X[:n_anchors, 0], X[:n_anchors, 1], marker="*", c="red")
-    nx.draw_networkx_edges(nx.from_numpy_array(D), pos=X, ax=axs[0], width=0.5)
+    nx.draw_networkx_edges(nx.from_numpy_array(D * B), pos=X, ax=axs[0], width=0.5)
     axs[0].set_title("True Graph")
 
     # Plot estimated graph
     axs[1].scatter(estimates[:n_anchors, 0], estimates[:n_anchors, 1], marker="*", c="red")
-    nx.draw_networkx_edges(nx.from_numpy_array(D), pos=estimates, ax=axs[1], width=0.5)
+    nx.draw_networkx_edges(nx.from_numpy_array(D * B), pos=estimates, ax=axs[1], width=0.5)
     axs[1].set_title("Estimated Graph")
-    """ plt.tight_layout()
-    plt.show() """
+    plt.tight_layout()
+    plt.show()
     return axs
 
 
@@ -2690,7 +2691,7 @@ def plot_all(iteration, M, weights, X, weighted_means, anchors, intersections, r
     fig.savefig(os.path.join(folder, f"rmse_iter_{iteration}.png"))
 
     # Plot results
-    plot_results(M, weights, X, weighted_means, anchors, intersections, iteration, show_bbox=False, uncertainties=None, ax=axs[1])
+    plot_results(M, B, weights, X, weighted_means, anchors, intersections, iteration, show_bbox=False, uncertainties=None, ax=axs[1])
     fig.savefig(os.path.join(folder, f"results_iter_{iteration}.png"))
 
     # Plot comparison of graphs
@@ -2787,109 +2788,3 @@ def save_individual_plots(iteration, M, weights, X, weighted_means, anchors, int
     fig.savefig(os.path.join(folder, f"network_error_ones_iter_{iteration}.png"))
     plt.close(fig)
 
-""" X = np.array([
-    [2, 2],
-    [8, 8]
-])
-p = 50
-y = np.zeros((2, p, 2))
-g = 1
-for i in range(len(X)):
-    y[i] = np.random.uniform(X[i, 0] - g, X[i, 0] + g, size=(p, 2))
-    plt.scatter(y[i, :, 0], y[i, :, 1])
-plt.scatter(X[:, 0], X[:, 1], color="red")
-
-
-#angle_samples = np.arctan2(y[0, :, 1], y[0, :, 0]) - np.arctan2(y[1, :, 1], y[1, :, 0])
-yy = y[1] - y[0]
-angle_samples = np.arctan2(yy[:, 1], yy[:, 0])
-kde = gaussian_kde(angle_samples.T)
-samples = kde.resample(p).T
-samples = np.mod(samples + np.pi, 2*np.pi) - np.pi
-x_ru = y[0] + np.column_stack([8*+np.cos(samples), 8*np.sin(samples)])
-plt.scatter(x_ru[:, 0], x_ru[:, 1])
-plt.show()
- """
-
-
-""" import matplotlib.pyplot as plt
-import numpy as np
-
-# Generate some data
-x = np.linspace(0, 10, 100)
-y1 = 5 + 0.1 * np.random.randn(100) # deterministic estimate
-y2 = 5 + 0.5 * np.random.randn(100) # probabilistic distribution
-
-# Plot the data
-plt.figure(figsize=(8, 6))
-plt.plot(x, y1, 'r-', label='Deterministic estimate')
-plt.plot(x, y2, 'b.', label='Probabilistic distribution')
-plt.xlabel('Time')
-plt.ylabel('Position')
-plt.legend()
-plt.title('Comparison between deterministic and probabilistic estimates')
-plt.show() """
-
-
-""" import matplotlib.pyplot as plt
-import numpy as np
-
-# Generate some data
-x = np.linspace(0, 10, 100)
-y1 = 5 + 0.1 * np.random.randn(100) # low noise
-y2 = 5 + 0.5 * np.random.randn(100) # high noise
-y3 = 5 + 0.1 * np.exp(-x) # probabilistic estimate
-
-# Plot the data
-plt.figure(figsize=(8, 6))
-plt.plot(x, y1, 'r.', label='Low noise')
-plt.plot(x, y2, 'b.', label='High noise')
-plt.plot(x, y3, 'g-', label='Probabilistic estimate')
-plt.xlabel('Time')
-plt.ylabel('Position')
-plt.legend()
-plt.title('Scenario where sensor noise increases')
-plt.show() """
-
-"""
-def create_bbox(D: np.ndarray, anchors: np.ndarray, limits: np.ndarray, radius: int):
-
-    n_samples = D.shape[0]
-    n_anchors, d = anchors.shape
-    bboxes = np.zeros((n_samples, n_anchors, 2*d))
-    intersection_bboxes = np.zeros((n_samples, 2*d))
-    # Figure out a way to center the target nodes
-    gap = 0
-    for i in range(n_samples):
-        if i < n_anchors:
-            for k in range(d):
-                intersection_bboxes[i, 2*k] = max(anchors[i, k] - radius, limits[2*k])
-                intersection_bboxes[i, 2*k+1] = min(anchors[i, k] + radius, limits[2*k+1])
-            continue
-
-        for j in range(n_anchors):
-            if i == j or D[i, j] == 0:
-                bboxes[i, j] = limits
-                continue
-            for k in range(d):
-                bboxes[i, j, 2*k] = max(anchors[j, k] - D[i, j], limits[2*k])
-                bboxes[i, j, 2*k+1] = min(anchors[j, k] + D[i, j], limits[2*k+1])
-        
-        for k in range(d):
-            intersection_bboxes[i, 2*k] = np.max(bboxes[i, :, k*2], axis=0)
-            intersection_bboxes[i, 2*k+1] = np.min(bboxes[i, :, k*2+1], axis=0)
-
-            if intersection_bboxes[i, 2*k] > intersection_bboxes[i, 2*k+1]:
-                intersection_bboxes[i, 2*k], intersection_bboxes[i, 2*k+1] = intersection_bboxes[i, 2*k+1], intersection_bboxes[i, 2*k]
-        
-            if intersection_bboxes[i, 2*k+1] - intersection_bboxes[i, 2*k] < gap:
-                intersection_bboxes[i, 2*k] -= gap
-                intersection_bboxes[i, 2*k+1] += gap
-    return intersection_bboxes, bboxes
-"""
-
-"""
-    seconds = np.array([1.820, 2.432, 3.331, 3.903])
-    hops = np.array([1, 2, 3, 4])
-    plot_computational_time(seconds=seconds, hops=hops)
-"""

@@ -23,12 +23,14 @@ window_big = (-55, 55)
 window_small = (5, 85)
 window = window_small """
 
-def create_bbox(D: np.ndarray, anchors: np.ndarray, limits: np.ndarray, radius: int):
+def create_bbox(D: np.ndarray, anchors: np.ndarray, limits: np.ndarray, radius: int, priors: bool = False):
 
     n_samples = D.shape[0]
     n_anchors, d = anchors.shape
     bboxes = np.zeros((n_samples, n_anchors, 2*d))
     intersection_bboxes = np.zeros((n_samples, 2*d))
+    if not priors:
+        return intersection_bboxes, bboxes
     # Figure out a way to center the target nodes
     gap = 0
     for i in range(n_samples):
@@ -148,7 +150,7 @@ def iterative_NBP(D: np.ndarray, B:np.ndarray, X: np.ndarray, anchors: np.ndarra
     n_anchors, d_dim = anchors.shape # number of anchors
     anchor_list = list(range(n_anchors)) # first n nodes are the anchors
     
-    intersections, bboxes = create_bbox(D, anchors, limits=deployment_area, radius=radius)
+    intersections, bboxes = create_bbox(D, anchors, limits=deployment_area, radius=radius, priors=priors)
     mm = deployment_area[0] * -2
     M, prior_beliefs = generate_particles(intersections, anchors, n_particles, priors, mm)
     messages = np.ones((n_samples, n_samples, n_particles))
@@ -357,7 +359,7 @@ def iterative_NBP(D: np.ndarray, B:np.ndarray, X: np.ndarray, anchors: np.ndarra
             #plot_uncertainties(uncertainties_dict=uncertainties_dict, overall_uncertainties_list=overall_uncertainties_list, n_anchors=anchors.shape[0], ax=None)
             #plot_proposal_dist(M, weights, X, D)
             #plot_initial_particles(X, D, M, anchors, intersections)
-            plot_compare_graphs(X, weighted_means, anchors, radius, D, iter, M=M_temp, intersections=intersections)
+            plot_compare_graphs(X, B, weighted_means, anchors, radius, D, iter, M=M_temp, intersections=intersections)
             """ plot_RMSE(_rmse, iter+1) # 1-ax
             plot_results(M, weights, X, weighted_means, anchors, intersections, iter, show_bbox=False, uncertainties=None) # 1-ax
             if iter == 0:
@@ -436,12 +438,12 @@ def plot_computational_time(seconds_distributed, seconds_centralized, hops):
 
 if "__main__" == __name__:
 
-    seed = None
+    seed = 42
     np.random.seed(seed)
     n, d = 100, 2
     m = 100
     p = 100
-    r = 16
+    r = 22
     a = 7
     i = 10
     k = 4
@@ -470,9 +472,9 @@ if "__main__" == __name__:
     
     area = np.array([0, m, 0, m]) """
 
-    generated_anchors = generate_anchors(deployment_area=area, anchor_count=a, border_offset=np.sqrt(m)*1)
+    """ generated_anchors = generate_anchors(deployment_area=area, anchor_count=a, border_offset=np.sqrt(m)*1)
     a = len(generated_anchors)
-    X_true[:a] = generated_anchors
+    X_true[:a] = generated_anchors """
 
     D, B = get_distance_matrix(X_true, a, noise=nn_noise, communication_radius=r) # noise : 1
     DD, BB = get_distance_matrix(X_true, a, noise=None, communication_radius=r)
@@ -487,10 +489,10 @@ if "__main__" == __name__:
                  name="True Graph",
                  subset=-1, ax=ax[0]) """
 
-    network, _, _ = get_n_hop(X_true, D, 2, r, a, 1)
+    network, _, _ = get_n_hop(X_true, D, 4, r, a, 1)
     _, _, C = get_n_hop(X_true, D, 2, r, a, 1)
 
-    #plot_network(X_true, B, n_anchors=a, r=r, D=network, subset=-1)
+    plot_network(X_true, B, n_anchors=a, r=r, D=network, subset=-1)
 
     DDD = D*B - DD
     non_zero = DDD[DDD != 0]
@@ -506,6 +508,11 @@ if "__main__" == __name__:
     indices_hop = {i: np.where(nnn == i)[0] for i in range(5)}
     print(indices_hop)
 
+    print(np.allclose(graphs['one'], D))
+    print(np.allclose(graphs['one'], network))
+    print(np.allclose(graphs['two'], network))
+    print(np.allclose(graphs['two'], D))
+    print(np.allclose(network, D))
     profiler = cProfile.Profile()
     profiler.enable()
     iterative_NBP(D=network,

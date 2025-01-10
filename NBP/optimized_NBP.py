@@ -222,101 +222,6 @@ class NBP:
             #"differences": self.differences
         }
         return results
-
-    
-    def NBP_iteration2(self, all_messages: np.ndarray, all_weights: np.ndarray, all_particles: np.ndarray):
-        # Intializing iteration
-        estimates = np.einsum('ijk,ij->ik', all_particles[self.n_anchors:], all_weights[self.n_anchors:])
-        messages_ru = dict()
-        sampled_particles = [[] for i in range(self.n_nodes)]
-        batches_remaining = [self.n_batches * self.n_samples for _ in range(self.n_nodes)]
-        neighbor_count = [np.count_nonzero(u > 0) for u in self.C]
-
-        # Message approximation and sampling from proposals
-        for node_r, particles_r in enumerate(all_particles): # r is message sender
-            for node_u, particles_u in enumerate(all_particles): # u is message receiver
-                if node_u in self.anchor_list: # if receiver is anchor, skip
-                    continue
-
-                # for all one-hop neighbors of r, approximate all outgoing messages
-                if node_r != node_u and self.D[node_r, node_u] != 0 and self.C[node_r, node_u] == 1:
-                    noise = np.random.normal(0, 1, size=self.n_samples)*1
-                    thetas = np.random.uniform(0, 2*np.pi, size=self.n_samples)
-                    cos_u = (self.D[node_r, node_u] + noise) * np.cos(thetas)
-                    sin_u = (self.D[node_r, node_u] + noise) * np.sin(thetas)
-                    # Particles of message from r to u
-                    X_ru = particles_r + np.column_stack([cos_u, sin_u]) 
-
-                    difference_sq = np.linalg.norm(X_ru - estimates[node_u - self.n_anchors], axis=1)**2
-                    detection_probabilities = np.exp(-(difference_sq / (2 * self.radius**2)))
-                    # Weights of particles of message from r to u
-                    W_ru = detection_probabilities * (all_weights[node_r] / all_messages[node_r, node_u])
-                    W_ru /= W_ru.sum()
-
-                    # Proposal distribution of r, for u. Also known as message from r to u approximation
-                    proposal_ru = gaussian_kde(dataset=X_ru.T, weights=W_ru, bw_method='silverman')
-                    messages_ru[node_r, node_u] = proposal_ru
-
-                    # Sampling from proposals of neighbors
-                    n_particles = batches_remaining[node_u] // neighbor_count[node_u]
-                    batches_remaining[node_u] -= n_particles
-                    neighbor_count[node_u] -= 1
-
-                    particles = proposal_ru.resample(n_particles).T
-                    sampled_particles[node_u].append(particles)
-        
-        # Merge sampled particles of each node from neighbors
-        for node, particles_from_neighbors in enumerate(sampled_particles):
-            if len(particles_from_neighbors) != 0:
-                sampled_particles[node] = np.concatenate(particles_from_neighbors)
-
-        temp_all_particles = all_particles.copy()
-        temp_all_weights = all_weights.copy()
-
-        # Belief computations and Resampling with replacement
-        for node_u, particles_u in enumerate(sampled_particles): # u is message receiver
-            if node_u in self.anchor_list: # if u is anchor, skip
-                continue
-
-            incoming_message_u = dict()
-            one_hop_messages = []
-            all_messages_u = []
-            
-            for node_r, particles_r in enumerate(temp_all_particles): # r is message sender
-                if self.D[node_u, node_r] != 0: # if connected with one-hop or two-hop
-                    if self.C[node_u, node_r] == 1: # if u and r one-hop neighbors
-                        message_ru = messages_ru[node_r, node_u](particles_u.T) # evaluate sampled particles
-                        one_hop_messages.append(message_ru)
-                    else: # if u and r two-hop neighbors
-                        two_hop_message = []
-                        for particle_of_u in particles_u:
-                            difference_sq = np.linalg.norm(particle_of_u - particles_r, axis=1)**2
-                            detection_probabilities = np.exp(-(difference_sq / (2 * self.radius**2)))
-                            two_hop_message_particle = 1 - np.sum(temp_all_weights[node_r] * detection_probabilities)
-                            two_hop_message.append(two_hop_message_particle)
-                        received_message_r = np.array(two_hop_message)
-                        message_ru = received_message_r
-
-                    all_messages_u.append(message_ru)
-                    incoming_message_u[node_r] = message_ru
-            
-            proposal_product = np.prod(all_messages_u, axis=0)
-            proposal_sum = np.sum(one_hop_messages, axis=0)
-
-            W_u = proposal_product / proposal_sum # Weights to resample particles of u
-            W_u /= W_u.sum()
-
-            indexes = np.arange(self.n_batches * self.n_samples)
-            indexes = np.random.choice(indexes, size=self.n_samples, replace=True, p=W_u)
-
-            all_particles[node_u] = particles_u[indexes]
-            all_weights[node_u] = W_u[indexes]
-            all_weights[node_u] /= all_weights[node_u].sum()
-
-            for neighbor, message in incoming_message_u.items():
-                all_messages[node_u, neighbor] = message[indexes]
-
-        return all_messages, all_weights, all_particles
     
     def NBP_iteration(self, all_messages: np.ndarray, all_weights: np.ndarray, all_particles: np.ndarray):
             estimates = np.einsum('ijk,ij->ik', all_particles[self.n_anchors:], all_weights[self.n_anchors:])
@@ -405,7 +310,100 @@ class NBP:
                 executor.map(belief_update, range(self.n_nodes))
             
             return all_messages, all_weights, all_particles
+    
+    def NBP_iteration2(self, all_messages: np.ndarray, all_weights: np.ndarray, all_particles: np.ndarray):
+            # Intializing iteration
+            estimates = np.einsum('ijk,ij->ik', all_particles[self.n_anchors:], all_weights[self.n_anchors:])
+            messages_ru = dict()
+            sampled_particles = [[] for i in range(self.n_nodes)]
+            batches_remaining = [self.n_batches * self.n_samples for _ in range(self.n_nodes)]
+            neighbor_count = [np.count_nonzero(u > 0) for u in self.C]
 
+            # Message approximation and sampling from proposals
+            for node_r, particles_r in enumerate(all_particles): # r is message sender
+                for node_u, particles_u in enumerate(all_particles): # u is message receiver
+                    if node_u in self.anchor_list: # if receiver is anchor, skip
+                        continue
+
+                    # for all one-hop neighbors of r, approximate all outgoing messages
+                    if node_r != node_u and self.D[node_r, node_u] != 0 and self.C[node_r, node_u] == 1:
+                        noise = np.random.normal(0, 1, size=self.n_samples)*1
+                        thetas = np.random.uniform(0, 2*np.pi, size=self.n_samples)
+                        cos_u = (self.D[node_r, node_u] + noise) * np.cos(thetas)
+                        sin_u = (self.D[node_r, node_u] + noise) * np.sin(thetas)
+                        # Particles of message from r to u
+                        X_ru = particles_r + np.column_stack([cos_u, sin_u]) 
+
+                        difference_sq = np.linalg.norm(X_ru - estimates[node_u - self.n_anchors], axis=1)**2
+                        detection_probabilities = np.exp(-(difference_sq / (2 * self.radius**2)))
+                        # Weights of particles of message from r to u
+                        W_ru = detection_probabilities * (all_weights[node_r] / all_messages[node_r, node_u])
+                        W_ru /= W_ru.sum()
+
+                        # Proposal distribution of r, for u. Also known as message from r to u approximation
+                        proposal_ru = gaussian_kde(dataset=X_ru.T, weights=W_ru, bw_method='silverman')
+                        messages_ru[node_r, node_u] = proposal_ru
+
+                        # Sampling from proposals of neighbors
+                        n_particles = batches_remaining[node_u] // neighbor_count[node_u]
+                        batches_remaining[node_u] -= n_particles
+                        neighbor_count[node_u] -= 1
+
+                        particles = proposal_ru.resample(n_particles).T
+                        sampled_particles[node_u].append(particles)
+            
+            # Merge sampled particles of each node from neighbors
+            for node, particles_from_neighbors in enumerate(sampled_particles):
+                if len(particles_from_neighbors) != 0:
+                    sampled_particles[node] = np.concatenate(particles_from_neighbors)
+
+            temp_all_particles = all_particles.copy()
+            temp_all_weights = all_weights.copy()
+
+            # Belief computations and Resampling with replacement
+            for node_u, particles_u in enumerate(sampled_particles): # u is message receiver
+                if node_u in self.anchor_list: # if u is anchor, skip
+                    continue
+
+                incoming_message_u = dict()
+                one_hop_messages = []
+                all_messages_u = []
+                
+                for node_r, particles_r in enumerate(temp_all_particles): # r is message sender
+                    if self.D[node_u, node_r] != 0: # if connected with one-hop or two-hop
+                        if self.C[node_u, node_r] == 1: # if u and r one-hop neighbors
+                            message_ru = messages_ru[node_r, node_u](particles_u.T) # evaluate sampled particles
+                            one_hop_messages.append(message_ru)
+                        else: # if u and r two-hop neighbors
+                            two_hop_message = []
+                            for particle_of_u in particles_u:
+                                difference_sq = np.linalg.norm(particle_of_u - particles_r, axis=1)**2
+                                detection_probabilities = np.exp(-(difference_sq / (2 * self.radius**2)))
+                                two_hop_message_particle = 1 - np.sum(temp_all_weights[node_r] * detection_probabilities)
+                                two_hop_message.append(two_hop_message_particle)
+                            received_message_r = np.array(two_hop_message)
+                            message_ru = received_message_r
+
+                        all_messages_u.append(message_ru)
+                        incoming_message_u[node_r] = message_ru
+                
+                proposal_product = np.prod(all_messages_u, axis=0)
+                proposal_sum = np.sum(one_hop_messages, axis=0)
+
+                W_u = proposal_product / proposal_sum # Weights to resample particles of u
+                W_u /= W_u.sum()
+
+                indexes = np.arange(self.n_batches * self.n_samples)
+                indexes = np.random.choice(indexes, size=self.n_samples, replace=True, p=W_u)
+
+                all_particles[node_u] = particles_u[indexes]
+                all_weights[node_u] = W_u[indexes]
+                all_weights[node_u] /= all_weights[node_u].sum()
+
+                for neighbor, message in incoming_message_u.items():
+                    all_messages[node_u, neighbor] = message[indexes]
+
+            return all_messages, all_weights, all_particles
 
 def run_experiment(parameters, n_experiments, auto_anchors, n_hop, priors, name):
     experiments = dict()
