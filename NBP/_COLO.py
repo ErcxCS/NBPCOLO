@@ -12,7 +12,7 @@ from scipy.stats import norm, gaussian_kde, uniform
 from scipy.spatial import procrustes
 import seaborn as sns
 import pandas
-from Main import ClassicMDS
+from NBP.MDS import ClassicMDS
 import matplotlib.patches as mpatches
 from matplotlib.patches import Circle
 from matplotlib.cm import ScalarMappable
