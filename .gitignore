@@ -3,3 +3,7 @@ NBP/*
 
 # Do not ignore .py files inside NBP
 !NBP/**/*.py
+
+*.pyc
+
+NBP/__pycache__
