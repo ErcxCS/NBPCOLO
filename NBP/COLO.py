@@ -6,7 +6,7 @@ from _COLO import *
 from scipy.spatial import procrustes
 import seaborn as sns
 import pandas
-from NBP.MDS import ClassicMDS
+from MDS import ClassicMDS
 import matplotlib.patches as mpatches
 from matplotlib.patches import Circle
 from matplotlib.cm import ScalarMappable
@@ -121,7 +121,7 @@ def detection_probability(X_r: np.ndarray, x_u: np.ndarray, radius: int, dist):
 
 def iterative_NBP(D: np.ndarray, B:np.ndarray, X: np.ndarray, anchors: np.ndarray,
                   deployment_area: np.ndarray, n_particles: int, n_iter: int,
-                    k: int, radius: int, nn_noise: float, benchmark, priors, indices_hop):
+                    k: int, radius: int, nn_noise: float, benchmark, priors):
     """
     iterative Nonparametric Belief Propagation for Cooperative Localization task.
 
@@ -201,7 +201,7 @@ def iterative_NBP(D: np.ndarray, B:np.ndarray, X: np.ndarray, anchors: np.ndarra
         #plot_results_initial(anchors, X, weighted_means, intersections, M)
         m_ru = dict()
         M_new = [[] for i in range(n_samples)]
-        print(iter)
+        print(f"iteration: {iter+1}")
         kn_particles = [k * n_particles for _ in range(n_samples)]
         #neighbour_count = [np.count_nonzero((u[n_anchors:] > 0) & (u[n_anchors:] < radius)) for u in D]
         neighbour_count = [np.count_nonzero(u > 0) for u in B]
@@ -280,7 +280,7 @@ def iterative_NBP(D: np.ndarray, B:np.ndarray, X: np.ndarray, anchors: np.ndarra
             try:
                 indices = np.random.choice(idxs, size=n_particles, replace=True, p=W_u)
             except:
-                print(intersections[u])
+                print(f"error:{intersections[u]}")
                 plot_exception(W_u, u, intersections, X, Mu_new, indices)
                 
                 return
@@ -475,9 +475,10 @@ if "__main__" == __name__:
     """ generated_anchors = generate_anchors(deployment_area=area, anchor_count=a, border_offset=np.sqrt(m)*1)
     a = len(generated_anchors)
     X_true[:a] = generated_anchors """
-
+    
     D, B = get_distance_matrix(X_true, a, noise=nn_noise, communication_radius=r) # noise : 1
     DD, BB = get_distance_matrix(X_true, a, noise=None, communication_radius=r)
+    
     graphs = get_graphs(D)
     graphs_DD = get_graphs(DD)
     #fig, ax = plt.subplots(1, 2, figsize=(6, 12), sharex=True, sharey=True)
@@ -489,30 +490,35 @@ if "__main__" == __name__:
                  name="True Graph",
                  subset=-1, ax=ax[0]) """
 
-    network, _, _ = get_n_hop(X_true, D, 4, r, a, 1)
-    _, _, C = get_n_hop(X_true, D, 2, r, a, 1)
+    network, _, _ = get_n_hop(X_true, D, 8, r, a, 1)
+    _, _, C = get_n_hop(X_true, D, 8, r, a, 1)
 
-    plot_network(X_true, B, n_anchors=a, r=r, D=network, subset=-1)
+    print(network)
+    mds = ClassicMDS(D=network)
+    x_hat = mds.classic_mds()
+    mds.plot_results(X_true, x_hat)
+    x_hat_ab = mds.least_squares_registration(anchors=X_true[:a], anchors_hat=x_hat[:a], X_hat=x_hat)
+    mds.plot_results(X_true, x_hat_ab)
+    print(f"MDS RMSE: {RMSE(X_true[a:], x_hat_ab[a:])}")
+
+    #plot_network(X_true, B, n_anchors=a, r=r, D=network, subset=-1)
 
     DDD = D*B - DD
     non_zero = DDD[DDD != 0]
     benchmark = np.var(non_zero)
-    print(benchmark)
+    print(f"benchmark: {benchmark}")
 
     #seconds_distributed = np.array([1.820, 2.432, 3.331, 3.903])
     #seconds_centralized = np.array([7.908, 25.440, 46.664, 65.454])
     #hops = np.array([1, 2, 3, 4])
     #plot_computational_time(seconds_distributed, seconds_centralized, hops)
     #C -= B
-    nnn = C[a:, :a].sum(axis=1)
-    indices_hop = {i: np.where(nnn == i)[0] for i in range(5)}
-    print(indices_hop)
 
-    print(np.allclose(graphs['one'], D))
+    """ print(np.allclose(graphs['one'], D))
     print(np.allclose(graphs['one'], network))
     print(np.allclose(graphs['two'], network))
     print(np.allclose(graphs['two'], D))
-    print(np.allclose(network, D))
+    print(np.allclose(network, D)) """
     profiler = cProfile.Profile()
     profiler.enable()
     iterative_NBP(D=network,
@@ -525,8 +531,7 @@ if "__main__" == __name__:
                                radius=r,
                                  nn_noise=nn_noise,
                                    benchmark=benchmark,
-                                   priors=priors,
-                                   indices_hop=indices_hop)
+                                   priors=priors)
     profiler.disable()
     profiler.dump_stats(f'profile_data_centralized.prof')
 

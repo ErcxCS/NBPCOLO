@@ -12,14 +12,11 @@ from scipy.stats import norm, gaussian_kde, uniform
 from scipy.spatial import procrustes
 import seaborn as sns
 import pandas
-from NBP.MDS import ClassicMDS
+from MDS import ClassicMDS
 import matplotlib.patches as mpatches
 from matplotlib.patches import Circle
 from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize
-
-import plotly.graph_objs as go
-import plotly.io as pio
 
 import os
 
@@ -211,7 +208,6 @@ def get_distance_matrix(X_true: np.ndarray, n_anchors: int, communication_radius
 
     RSS = distance_2_RSS(P_i, D, alpha, d0)
     DD = RSS_2_distance(P_i, RSS, alpha, d0, sigma=noise, add_noise=True)
-    print(RSS)
 
     DD[:n_anchors, :n_anchors] = D[:n_anchors, :n_anchors]
     DD = np.abs(DD) * B

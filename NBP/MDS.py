@@ -176,6 +176,7 @@ if  __name__ == '__main__':
     noise = np.random.normal(noise_mean, noise_std, (n, n))
     noise -= np.diag(noise.diagonal())
     D = euclidean_distances(X) + noise
+    print(D)
     #mds = ClassicMDS(corner_anchors=False, d_dimension=2, n_samples=n, m_anchors=a, meters=m, noise=0)
     mds = ClassicMDS(D=D)
     X_hat = mds.classic_mds()
