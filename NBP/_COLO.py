@@ -847,7 +847,7 @@ def plot_results_initial(anchors, X, weighted_means, intersections, M):
     plt.scatter(anchors[:, 0], anchors[:, 1], label="anchors", c="r", marker='*') # anchors nodes
     plt.scatter(X[n_anchors:, 0], X[n_anchors:, 1], label="true", c="g", marker='P') # target nodes
     plt.scatter(weighted_means[:, 0], weighted_means[:, 1], label="preds", c="y", marker="X") # preds
-    plt.plot([X[n_anchors:, 0], weighted_means[:, 0]], [X[n_anchors:, 1], weighted_means[:, 1]], "k--")
+    plt.plot([X[:, 0], weighted_means[:, 0]], [X[:, 1], weighted_means[:, 1]], "k--")
     for i, xt in enumerate(X):
         if i < n_anchors:
             plt.annotate(f"A_{i}", xt)
@@ -1593,8 +1593,8 @@ def plot_results(M, weights, X, predicts, anchors, intersections, iteration, sho
     all_weights = []
     nodes = []
     for i, (Xr, Wr) in enumerate(zip(M, weights)):
-        if i < n_anchors:  # Skip anchors
-            continue
+        """ if i < n_anchors:  # Skip anchors
+            continue """
         all_particles.extend(Xr)
         all_weights.extend(Wr)
         nodes.extend([f"Node {i}"] * len(Wr))
@@ -1608,7 +1608,7 @@ def plot_results(M, weights, X, predicts, anchors, intersections, iteration, sho
 
     # Plot bounding boxes if required
     if show_bbox:
-        for counter in range(n_anchors, n_samples):
+        for counter in range(0, n_samples):
             bbox = intersections[counter]
             xmin, xmax, ymin, ymax = bbox
             ax.plot([xmin, xmax, xmax, xmin, xmin], [ymin, ymin, ymax, ymax, ymin], '-')
@@ -1617,7 +1617,7 @@ def plot_results(M, weights, X, predicts, anchors, intersections, iteration, sho
     ax.scatter(anchors[:, 0], anchors[:, 1], label=rf"$N_{{a}}$", c="red", marker='*')
     ax.scatter(X[n_anchors:, 0], X[n_anchors:, 1], label=rf"$N_{{t}}$", c="green", marker='P')
     ax.scatter(predicts[:, 0], predicts[:, 1], label="Estimates", c="orange", marker="X")
-    ax.plot([X[n_anchors:, 0], predicts[:, 0]], [X[n_anchors:, 1], predicts[:, 1]], "k--")
+    ax.plot([X[:, 0], predicts[:, 0]], [X[:, 1], predicts[:, 1]], "k--")
 
     """ colors = ['cyan', 'green', 'pink', 'yellow']
     # KDE plot for all particles using the single DataFrame

@@ -98,7 +98,7 @@ def generate_particles(intersections: np.ndarray, anchors: np.ndarray, n_particl
     # Generate particles from bboxes and calculate prior beliefs
     if mds_init is not None:
         mds_particles = np.repeat(mds_init[:, np.newaxis, :], repeats=n_particles, axis=1)
-        all_particles[n_anchors:] = mds_particles[n_anchors:]
+        all_particles = mds_particles
     else:
         for i in range(n_anchors, n_samples):
             if not priors:
@@ -190,7 +190,7 @@ def iterative_NBP(D: np.ndarray, B:np.ndarray, X: np.ndarray, anchors: np.ndarra
     _rmse = []
     _similarities = []
     plot_rmse = []
-    uncertainties_dict = {i: [] for i in range(M.shape[0] - n_anchors)}
+    uncertainties_dict = {i: [] for i in range(M.shape[0])}
     overall_uncertainties_list = []
     overall_uncertainties_dict = {}
     error_dict = {}
@@ -204,7 +204,7 @@ def iterative_NBP(D: np.ndarray, B:np.ndarray, X: np.ndarray, anchors: np.ndarra
         """ if iter == 0:
             weighted_means = mds_init[n_anchors:]
         else: """
-        weighted_means = np.einsum('ijk,ij->ik', M[n_anchors:], weights[n_anchors:])
+        weighted_means = np.einsum('ijk,ij->ik', M, weights)
         plot_results_initial(anchors, X, weighted_means, intersections, M)
         m_ru = dict()
         M_new = [[] for i in range(n_samples)]
@@ -215,8 +215,8 @@ def iterative_NBP(D: np.ndarray, B:np.ndarray, X: np.ndarray, anchors: np.ndarra
         # print(neighbour_count)
         for r, Mr in enumerate(M): # sender
             for u, Mu in enumerate(M): # receiver
-                if u in anchor_list:
-                    continue
+                """ if u in anchor_list:
+                    continue """
                 if r != u and D[r, u] != 0 and B[r, u] == 1:
                     if iter == 0: #iter % 3 != 1:#iter == 0 or iter % 4 == 0:
                         d_xy, w_xy = random_spread(particles_r=Mr, d_ru=D[r, u])
@@ -225,7 +225,7 @@ def iterative_NBP(D: np.ndarray, B:np.ndarray, X: np.ndarray, anchors: np.ndarra
 
                     x_ru = Mr + d_xy
                     
-                    detect_prob = detection_probability(x_ru, weighted_means[u - n_anchors], radius, dist=D[r, u])
+                    detect_prob = detection_probability(x_ru, weighted_means[u], radius, dist=D[r, u])
                     w_ru = detect_prob * (weights[r] / messages[r, u]) * (1/w_xy)
                     w_ru /= w_ru.sum()
                     #plot_message_approx(X, D, M, anchors, intersections, x_ru, w_ru, r, u, radius, u_mean=weighted_means[u - n_anchors])
@@ -254,8 +254,8 @@ def iterative_NBP(D: np.ndarray, B:np.ndarray, X: np.ndarray, anchors: np.ndarra
         #plot_belief_update(all_particles=M, messages=m_ru, node_of_interest= 4)
         for u, Mu_new in enumerate(M_new): # skip anchors?
             # receiver
-            if u in anchor_list:
-                continue
+            """ if u in anchor_list:
+                continue """
 
             incoming_message = dict()
             q = []
@@ -322,8 +322,8 @@ def iterative_NBP(D: np.ndarray, B:np.ndarray, X: np.ndarray, anchors: np.ndarra
         
         #plot_message_kde(X, M, D, m_ru, anchors, 7, radius, MM_new, weights)
 
-        weighted_means = np.einsum('ijk,ij->ik', M[n_anchors:], weights[n_anchors:])
-        uncertainties, overall_uncertainty = weighted_covariance(particles=M[n_anchors:], weights=weights[n_anchors:], nodes=weighted_means, uncertainties_dict=uncertainties_dict, overall_uncertainties_list=overall_uncertainties_list, iteration=iter)
+        weighted_means = np.einsum('ijk,ij->ik', M, weights)
+        uncertainties, overall_uncertainty = weighted_covariance(particles=M, weights=weights, nodes=weighted_means, uncertainties_dict=uncertainties_dict, overall_uncertainties_list=overall_uncertainties_list, iteration=iter)
         """ overall_uncertainties_dict, error_dict = weighted_covariance_2(
             particles=M[n_anchors:],
             weights=weights[n_anchors:],
@@ -346,9 +346,9 @@ def iterative_NBP(D: np.ndarray, B:np.ndarray, X: np.ndarray, anchors: np.ndarra
         else:
             _rmse.append((rmse, overall_crlb)) """
         
-        _, _, disparity = procrustes(X[n_anchors:], weighted_means)
+        _, _, disparity = procrustes(X, weighted_means)
         _similarities.append(1 - disparity)
-        rmse, median = RMSE(X[n_anchors:], weighted_means)
+        rmse, median = RMSE(X, weighted_means)
         _rmse.append((rmse, median, benchmark))
         print(f"iter: {iter+1}, rmse: {rmse}")
         #difference_of_distances(weighted_means, X[n_anchors:], radius, B[n_anchors:, n_anchors:])
@@ -448,12 +448,12 @@ def mds_localization(network: np.ndarray, x_true: np.ndarray, num_anchors: int):
     mds = ClassicMDS(D=network)
     x_hat = mds.classic_mds()
     #mds.plot_results(X_true, x_hat)
-    x_hat_ab = mds.least_squares_registration(anchors=X_true[:num_anchors].copy(), anchors_hat=x_hat[:num_anchors].copy(), X_hat=x_hat)
+    #x_hat_ab = mds.least_squares_registration(anchors=X_true[:num_anchors].copy(), anchors_hat=x_hat[:num_anchors].copy(), X_hat=x_hat)
     #mds.plot_results(X_true, x_hat_ab)
-    rmse, median = RMSE(X_true[num_anchors:], x_hat_ab[num_anchors:])
+    rmse, median = RMSE(X_true[num_anchors:], x_hat[num_anchors:])
     print(f"MDS RMSE: {rmse}, MDS Median: {median}")
-    return x_hat_ab
-    #return x_hat
+    #return x_hat_ab
+    return x_hat
 
 if "__main__" == __name__:
 
@@ -513,7 +513,7 @@ if "__main__" == __name__:
     # n: n hop connectivity
     # nth_n: assumtion of n hop immidiate neighborhood
     mds_network, _, _ = get_n_hop(X_true, D, 15, r, a, 1)
-    network, B, C = get_n_hop(X_true, D, 2, r, a, 1)
+    network, B, C = get_n_hop(X_true, D, 15, r, a, 2)
     zero_count = np.count_nonzero(mds_network == 0)
     print("Number of zeros:", zero_count)
     #print(mds_network)
