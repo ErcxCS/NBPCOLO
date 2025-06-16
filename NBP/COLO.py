@@ -60,7 +60,7 @@ def create_bbox(D: np.ndarray, anchors: np.ndarray, limits: np.ndarray, radius: 
                 intersection_bboxes[i, 2*k+1] += gap
     return intersection_bboxes, bboxes
 
-def generate_particles(intersections: np.ndarray, anchors: np.ndarray, n_particles: int, priors, mm):
+def generate_particles(intersections: np.ndarray, anchors: np.ndarray, n_particles: int, priors, mm, mds_init):
     """
     Generates particles from intersections of bounded boxes for each target sample
 
@@ -96,15 +96,19 @@ def generate_particles(intersections: np.ndarray, anchors: np.ndarray, n_particl
     prior_beliefs = np.ones((n_samples, n_particles))
 
     # Generate particles from bboxes and calculate prior beliefs
-    for i in range(n_anchors, n_samples):
-        if not priors:
-            intersections[i] = np.array([-mm/2, mm/2, -mm/2, mm/2])
-        #intersections[i] = np.array([0, m, 0, m])
-        bbox = intersections[i].reshape(-1, 2)
-        for j in range(d):
-            #all_particles[i, :, j] = np.random.uniform(0, m, size=n_particles)
-            all_particles[i, :, j] = np.random.uniform(bbox[j, 0], bbox[j, 1], size=n_particles)
-        prior_beliefs[i] = mono_potential_bbox(intersections[i])(all_particles[i])
+    if mds_init is not None:
+        mds_particles = np.repeat(mds_init[:, np.newaxis, :], repeats=n_particles, axis=1)
+        all_particles[n_anchors:] = mds_particles[n_anchors:]
+    else:
+        for i in range(n_anchors, n_samples):
+            if not priors:
+                intersections[i] = np.array([-mm/2, mm/2, -mm/2, mm/2])
+            #intersections[i] = np.array([0, m, 0, m])
+            bbox = intersections[i].reshape(-1, 2)
+            for j in range(d):
+                #all_particles[i, :, j] = np.random.uniform(0, m, size=n_particles)
+                all_particles[i, :, j] = np.random.uniform(bbox[j, 0], bbox[j, 1], size=n_particles)
+            prior_beliefs[i] = mono_potential_bbox(intersections[i])(all_particles[i])
 
     return all_particles, prior_beliefs
 
@@ -121,7 +125,7 @@ def detection_probability(X_r: np.ndarray, x_u: np.ndarray, radius: int, dist):
 
 def iterative_NBP(D: np.ndarray, B:np.ndarray, X: np.ndarray, anchors: np.ndarray,
                   deployment_area: np.ndarray, n_particles: int, n_iter: int,
-                    k: int, radius: int, nn_noise: float, benchmark, priors):
+                    k: int, radius: int, nn_noise: float, benchmark, priors, mds_init):
     """
     iterative Nonparametric Belief Propagation for Cooperative Localization task.
 
@@ -152,7 +156,7 @@ def iterative_NBP(D: np.ndarray, B:np.ndarray, X: np.ndarray, anchors: np.ndarra
     
     intersections, bboxes = create_bbox(D, anchors, limits=deployment_area, radius=radius, priors=priors)
     mm = deployment_area[0] * -2
-    M, prior_beliefs = generate_particles(intersections, anchors, n_particles, priors, mm)
+    M, prior_beliefs = generate_particles(intersections, anchors, n_particles, priors, mm, mds_init)
     messages = np.ones((n_samples, n_samples, n_particles))
     weights = prior_beliefs / np.sum(prior_beliefs, axis=1, keepdims=True)
 
@@ -197,11 +201,14 @@ def iterative_NBP(D: np.ndarray, B:np.ndarray, X: np.ndarray, anchors: np.ndarra
 
     for iter in range(n_iter):
         #plot_initial_particles(X, D, M, anchors, intersections)
+        """ if iter == 0:
+            weighted_means = mds_init[n_anchors:]
+        else: """
         weighted_means = np.einsum('ijk,ij->ik', M[n_anchors:], weights[n_anchors:])
-        #plot_results_initial(anchors, X, weighted_means, intersections, M)
+        plot_results_initial(anchors, X, weighted_means, intersections, M)
         m_ru = dict()
         M_new = [[] for i in range(n_samples)]
-        print(f"iteration: {iter+1}")
+        
         kn_particles = [k * n_particles for _ in range(n_samples)]
         #neighbour_count = [np.count_nonzero((u[n_anchors:] > 0) & (u[n_anchors:] < radius)) for u in D]
         neighbour_count = [np.count_nonzero(u > 0) for u in B]
@@ -217,6 +224,7 @@ def iterative_NBP(D: np.ndarray, B:np.ndarray, X: np.ndarray, anchors: np.ndarra
                         d_xy, w_xy = relative_spread(Mu, Mr, D[r, u])
 
                     x_ru = Mr + d_xy
+                    
                     detect_prob = detection_probability(x_ru, weighted_means[u - n_anchors], radius, dist=D[r, u])
                     w_ru = detect_prob * (weights[r] / messages[r, u]) * (1/w_xy)
                     w_ru /= w_ru.sum()
@@ -342,7 +350,7 @@ def iterative_NBP(D: np.ndarray, B:np.ndarray, X: np.ndarray, anchors: np.ndarra
         _similarities.append(1 - disparity)
         rmse, median = RMSE(X[n_anchors:], weighted_means)
         _rmse.append((rmse, median, benchmark))
-        print(f"rmse: {rmse}")
+        print(f"iter: {iter+1}, rmse: {rmse}")
         #difference_of_distances(weighted_means, X[n_anchors:], radius, B[n_anchors:, n_anchors:])
 
         """ if len(plot_rmse) == 0 or _rmse[-1] < plot_rmse[-1]+np.random.normal(0.28, 0.25):
@@ -436,15 +444,26 @@ def plot_computational_time(seconds_distributed, seconds_centralized, hops):
     plt.tight_layout()
     plt.show()
 
+def mds_localization(network: np.ndarray, x_true: np.ndarray, num_anchors: int): 
+    mds = ClassicMDS(D=network)
+    x_hat = mds.classic_mds()
+    #mds.plot_results(X_true, x_hat)
+    x_hat_ab = mds.least_squares_registration(anchors=X_true[:num_anchors].copy(), anchors_hat=x_hat[:num_anchors].copy(), X_hat=x_hat)
+    #mds.plot_results(X_true, x_hat_ab)
+    rmse, median = RMSE(X_true[num_anchors:], x_hat_ab[num_anchors:])
+    print(f"MDS RMSE: {rmse}, MDS Median: {median}")
+    return x_hat_ab
+    #return x_hat
+
 if "__main__" == __name__:
 
-    seed = 42
+    seed = 31
     np.random.seed(seed)
     n, d = 100, 2
     m = 100
     p = 100
     r = 22
-    a = 7
+    a = 4
     i = 10
     k = 4
 
@@ -490,16 +509,16 @@ if "__main__" == __name__:
                  name="True Graph",
                  subset=-1, ax=ax[0]) """
 
-    network, _, _ = get_n_hop(X_true, D, 8, r, a, 1)
-    _, _, C = get_n_hop(X_true, D, 8, r, a, 1)
+    # network is simulated distance matrix
+    # n: n hop connectivity
+    # nth_n: assumtion of n hop immidiate neighborhood
+    mds_network, _, _ = get_n_hop(X_true, D, 15, r, a, 1)
+    network, B, C = get_n_hop(X_true, D, 2, r, a, 1)
+    zero_count = np.count_nonzero(mds_network == 0)
+    print("Number of zeros:", zero_count)
+    #print(mds_network)
 
-    print(network)
-    mds = ClassicMDS(D=network)
-    x_hat = mds.classic_mds()
-    mds.plot_results(X_true, x_hat)
-    x_hat_ab = mds.least_squares_registration(anchors=X_true[:a], anchors_hat=x_hat[:a], X_hat=x_hat)
-    mds.plot_results(X_true, x_hat_ab)
-    print(f"MDS RMSE: {RMSE(X_true[a:], x_hat_ab[a:])}")
+    mds_results = mds_localization(network=mds_network, x_true=X_true, num_anchors=a)
 
     #plot_network(X_true, B, n_anchors=a, r=r, D=network, subset=-1)
 
@@ -531,7 +550,8 @@ if "__main__" == __name__:
                                radius=r,
                                  nn_noise=nn_noise,
                                    benchmark=benchmark,
-                                   priors=priors)
+                                   priors=priors,
+                                   mds_init=mds_results)
     profiler.disable()
     profiler.dump_stats(f'profile_data_centralized.prof')
 

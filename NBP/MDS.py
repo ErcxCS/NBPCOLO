@@ -86,7 +86,7 @@ class ClassicMDS:
             self.D = D
             self.n_samples = self.D.shape[0]
         if d_dimension:
-            self.d_dimensions = d_dimension
+            self.d_dimensions = 2
         self.D2 = self.D**2
         self.I = np.identity(self.n_samples)
         self.e = np.ones((self.n_samples, self.n_samples))
@@ -112,25 +112,6 @@ class ClassicMDS:
         return self.X_hat_ab
     
     def plot_results(self, X, X_hat, show_lines=False, show_anchors=False):
-        """ W = self.D.copy()
-        r = 15
-        print(r)
-        W[W < r] = 1
-        W[W > r] = 0
-        pprint.pprint(W)
-        g = nx.from_numpy_array(W.copy())
-        cliques = nx.find_cliques(g)
-        qq = nx.find_cycle(g)
-        print(qq)
-        
-        for c in cliques:
-            print(c)
-        plt.scatter(X[:, 0], X[:, 1], label="True X")
-        for i in range(len(X)):
-            for j in range(i, len(X)):
-                if i != j and self.D[i, j] < r:
-                    plt.plot((X[i, 0], X[j, 0]), (X[i, 1], X[j, 1]))
-            plt.annotate(i,X[i]) """
         plt.scatter(X[:, 0], X[:, 1], label="True X")
         plt.scatter(X_hat[:, 0], X_hat[:, 1], label="Predicted Points")
         plt.legend()

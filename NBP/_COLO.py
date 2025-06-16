@@ -852,12 +852,16 @@ def plot_results_initial(anchors, X, weighted_means, intersections, M):
         if i < n_anchors:
             plt.annotate(f"A_{i}", xt)
         else:
-            bbox = intersections[i]
+            """ if not (i > 33 and i < 35):
+                continue """
+            
+            """ bbox = intersections[i]
             xmin, xmax, ymin, ymax = bbox
             plt.plot([xmin, xmax, xmax, xmin, xmin], [ymin, ymin, ymax, ymax, ymin])
-            plt.scatter(M[i, :, 0], M[i, :, 1], marker=".", s=10)
+            plt.annotate(f"t_{i}", xt) """
+            """ plt.scatter(M[i, :, 0], M[i, :, 1], marker=".", s=10)
             plt.annotate(f"t_{i}", xt)
-            plt.annotate(f"p_{i}", weighted_means[i - n_anchors])
+            plt.annotate(f"p_{i}", weighted_means[i - n_anchors]) """
     plt.legend()
     plt.title(f"iter: {iter}, Predictions with initial weights")
     plt.show()
