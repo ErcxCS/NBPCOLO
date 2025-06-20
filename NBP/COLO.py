@@ -467,8 +467,8 @@ if "__main__" == __name__:
     i = 10
     k = 4
 
-    priors = True
-    nn_noise=1
+    priors = False
+    nn_noise = 1
 
     X_true, area = generate_targets(seed=seed,
                             shape=(n, d),
@@ -491,9 +491,9 @@ if "__main__" == __name__:
     
     area = np.array([0, m, 0, m]) """
 
-    """ generated_anchors = generate_anchors(deployment_area=area, anchor_count=a, border_offset=np.sqrt(m)*1)
+    generated_anchors = generate_anchors(deployment_area=area, anchor_count=a, border_offset=np.sqrt(m)*1)
     a = len(generated_anchors)
-    X_true[:a] = generated_anchors """
+    X_true[:a] = generated_anchors
     
     D, B = get_distance_matrix(X_true, a, noise=nn_noise, communication_radius=r) # noise : 1
     DD, BB = get_distance_matrix(X_true, a, noise=None, communication_radius=r)
@@ -513,7 +513,7 @@ if "__main__" == __name__:
     # n: n hop connectivity
     # nth_n: assumtion of n hop immidiate neighborhood
     mds_network, _, _ = get_n_hop(X_true, D, 15, r, a, 1)
-    network, B, C = get_n_hop(X_true, D, 15, r, a, 2)
+    network, B, C = get_n_hop(X_true, D, 2, r, a, 1)
     zero_count = np.count_nonzero(mds_network == 0)
     print("Number of zeros:", zero_count)
     #print(mds_network)

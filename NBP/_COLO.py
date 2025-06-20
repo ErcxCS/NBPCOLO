@@ -2749,7 +2749,7 @@ def save_individual_plots(iteration, M, weights, X, weighted_means, anchors, int
     #plot_compare_graphs(X, weighted_means, anchors, radius, D, iteration, M=M, intersections=intersections, axs=ax)
     XX = X.copy()
     n_anchors = anchors.shape[0]
-    XX[n_anchors:] = weighted_means
+    XX = weighted_means
 
     plot_network(XX, B, n_anchors=anchors.shape[0], r=radius, D=D, subset=-1, ax=ax[1], name="Estimated Graph")
     plot_network(X, B, n_anchors=anchors.shape[0], r=radius, D=D, subset=-1, ax=ax[0], name="True Graph")
