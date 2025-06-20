@@ -1,0 +1,10 @@
+{
+    "num_nodes": 20,
+    "num_anchors": 0,
+    "d_dim": 2,
+    "meters": 100,
+    "radius": 20,
+    "noise": 1.0,
+    "seed":42,
+    "placement":true
+}
