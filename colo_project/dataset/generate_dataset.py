@@ -48,11 +48,11 @@ def generate_scenario(config_path: Path, out_dir: Path) -> None:
         anchors = X_true[:num_anchors]
 
     full_D, D, B, RSS = get_distance_matrix(X_true, radius, noise)
-
+    
     # Ensure output directory exists
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{config_path.stem}_seed{seed}.npz"
-
+    
     # Save raw measuremnets
     np.savez_compressed(
         out_path,

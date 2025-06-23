@@ -102,7 +102,7 @@ def get_distance_matrix(
     # Full pairwise distances
     diffs = X_true[:, None, :] - X_true[None, :, :]
     full_D = np.linalg.norm(diffs, axis=-1)
-
+    
     # Connectivity distance matrix
     D = full_D.copy()
     D[D > communication_radius] = 0.0
@@ -125,6 +125,7 @@ def get_distance_matrix(
             mean=0.0, sigma=noise, size=RSS.shape
         )
         noise_mtx = (noise_mtx + noise_mtx.T) / 2.0
+        print(noise_mtx)
         RSS = RSS + noise_mtx
 
     return full_D, D, B, RSS
@@ -158,19 +159,24 @@ def n_hop_distance(D: np.ndarray, n_hops: int) -> np.ndarray:
         M = D_prev[:, :, None] + W[None, :, :]
         D_prev = np.min(M, axis=1)
         Dn = np.minimum(Dn, D_prev)
-    
-    Dn[Dn == np.inf] == 0.0
+
+    Dn[Dn == np.inf] = 0.0
     return Dn
+
 
 def nth_hop_adjacency(D: np.ndarray, n_hops: int) -> np.ndarray:
     """
     Compute binay adjacency matrix for nth hop
-    
+
     Args:
         D: direct-distance matrix (N x N), zero where no direct edge.
         n_hops: hop number for adjacency (>=1)
 
-    Returns?
+    Returns:
         Bn: binary matrix where Bn[i, j] = 1 if shortest path uses n_hops edge.
     """
-    pass
+    if n_hops < 1:
+        raise ValueError("n_hops must be >= 1")
+    Dn = n_hop_distance(D, n_hops)
+    Bn = Dn > 0
+    return Bn.astype(int)

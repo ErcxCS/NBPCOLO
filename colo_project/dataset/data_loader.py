@@ -1,5 +1,6 @@
 from pathlib import Path
 import numpy as np
+from utils.graph_utils import n_hop_distance, nth_hop_adjacency
 
 import networkx as nx
 import seaborn as sns
@@ -30,30 +31,6 @@ def generate_test(scneario_name: str):
     out_dir = Path(f"./dataset/scenarios/{scneario_name}")
     config_path = Path(f"./dataset/scenarios/{scneario_name}" + ".json")
     generate_scenario(config_path, out_dir)
-
-
-def n_hop_distance(D: np.ndarray, n_hops: int) -> np.ndarray:
-    if n_hops < 1:
-        raise ValueError("n_hops must be >= 1")
-    N = D.shape[0]
-    # Replace zeros with inf except diagonal
-    W = D.astype(float)
-    mask = (W == 0)
-    W[mask] = np.inf
-    np.fill_diagonal(W, 0.0)
-
-    # Dynamic programming: W^1 = W, W^k = min(W^{k - 1} + W)
-    D_prev = W.copy()
-    Dn = W.copy()
-    for _ in range(2, n_hops + 1):
-        # min-plus matrix multiplication
-        # compute all pairs: min_k (D_prev[i, k] + W[k, j])
-        M = D_prev[:, :, None] + W[None, :, :]
-        D_prev = np.min(M, axis=1)
-        Dn = np.minimum(Dn, D_prev)
-    # unreachable => 0
-    Dn[Dn == np.inf] = 0.0
-    return Dn
 
 
 def plot_MRF(X: np.ndarray, B: np.ndarray, n_anchors: int, network: np.ndarray, radius: int,):
@@ -103,12 +80,9 @@ def plot_MRF(X: np.ndarray, B: np.ndarray, n_anchors: int, network: np.ndarray, 
 
 if __name__ == "__main__":
     generate_test("test")
-    loc = LocalizationScneario(Path("./dataset/scenarios/test/test_seed31.npz"))
-    network, B, C = get_n_hop(loc.D, 7, 1)
-    other_network = n_hop_distance(loc.D, 7)
-    print(np.allclose(network, other_network))
+    scenario = LocalizationScneario(Path("./dataset/scenarios/test/test_seed31.npz"))
+    Dn = n_hop_distance(scenario.D, 2)
+    Bn = nth_hop_adjacency(scenario.D, 1)
+    print(scenario.RSS)
     
-    print(network)
-    print(np.count_nonzero(network))
-    print(len(loc.X_true))
-    plot_MRF(loc.X_true, B, loc.num_anchors, network, 20)
+    
