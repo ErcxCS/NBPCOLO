@@ -128,3 +128,49 @@ def get_distance_matrix(
         RSS = RSS + noise_mtx
 
     return full_D, D, B, RSS
+
+
+def n_hop_distance(D: np.ndarray, n_hops: int) -> np.ndarray:
+    """
+    Compute the shortest-path distance matrix allowing up to n_hops edges.
+
+    Args:
+        D: direct-distance matrix (N x N), zero where no direct edge.
+        n_hops: maximum number of hops (>=1)
+
+    Returns:
+        Dn: distance matrix (N x N) where
+            Dn[i, j] = shortest sum of edge distances among all paths
+            from i to j using most n_hops edges; 0 if unreachable.
+    """
+    if n_hops < 1:
+        raise ValueError("n_hops must be >= 1")
+    W = D.astype(float)
+    mask = (W == 0)
+    W[mask] = np.inf
+    np.fill_diagonal(W, 0.0)
+
+    # DP: W^1 = W, W^k = min(W^{k^1} + W)
+    D_prev = W.copy()
+    Dn = W.copy()
+    for _ in range(2, n_hops + 1):
+        # compute all pairs: min_k (D_prev[i, k] + W[k, j])
+        M = D_prev[:, :, None] + W[None, :, :]
+        D_prev = np.min(M, axis=1)
+        Dn = np.minimum(Dn, D_prev)
+    
+    Dn[Dn == np.inf] == 0.0
+    return Dn
+
+def nth_hop_adjacency(D: np.ndarray, n_hops: int) -> np.ndarray:
+    """
+    Compute binay adjacency matrix for nth hop
+    
+    Args:
+        D: direct-distance matrix (N x N), zero where no direct edge.
+        n_hops: hop number for adjacency (>=1)
+
+    Returns?
+        Bn: binary matrix where Bn[i, j] = 1 if shortest path uses n_hops edge.
+    """
+    pass
