@@ -80,9 +80,7 @@ def plot_MRF(X: np.ndarray, B: np.ndarray, n_anchors: int, network: np.ndarray, 
 
 if __name__ == "__main__":
     generate_test("test")
-    scenario = LocalizationScneario(Path("./dataset/scenarios/test/test_seed31.npz"))
+    data_loc = Path("./dataset/scenarios/test/test_seed31.npz")
+    scenario = LocalizationScneario(data_loc)
     Dn = n_hop_distance(scenario.D, 2)
     Bn = nth_hop_adjacency(scenario.D, 1)
-    print(scenario.RSS)
-    
-    

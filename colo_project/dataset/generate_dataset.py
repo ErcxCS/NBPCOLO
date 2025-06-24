@@ -31,6 +31,22 @@ def generate_scenario(config_path: Path, out_dir: Path) -> None:
     radius = cfg.get("radius", 20)
     noise = cfg.get("noise", 1.0)
     placement = cfg.get("placement", True)
+    heterogeneity = cfg.get("heterogeneity", False)
+    power_level = cfg.get("power_level", -1)
+    # -1: 0 default
+    # 0: Bluetooth (0 - 4)
+    # 1: Wi-Fi (15 - 20)
+    # 2: Cellular (20 - 23)
+    # 3: sensor networks (-3 - 14) (Zigbee vs.)
+    # 4: RFID (-20 - 0)
+    transmission_powers = {
+        -1: (0, 0),
+        0: (0, 4),
+        1: (15, 20),
+        2: (20, 23),
+        3: (-3, 14),
+        4: (-20, 0)
+    }
 
     # Generate ground truth positions
     X_true, area = generate_targets(
@@ -47,12 +63,16 @@ def generate_scenario(config_path: Path, out_dir: Path) -> None:
             X_true[:num_anchors] = anchors
         anchors = X_true[:num_anchors]
 
-    full_D, D, B, RSS = get_distance_matrix(X_true, radius, noise)
-    
+    full_D, D, B, RSS = get_distance_matrix(
+        X_true, radius, noise,
+        heterogeneity=heterogeneity,
+        power_level=transmission_powers[power_level]
+    )
+
     # Ensure output directory exists
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{config_path.stem}_seed{seed}.npz"
-    
+
     # Save raw measuremnets
     np.savez_compressed(
         out_path,

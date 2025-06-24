@@ -81,7 +81,9 @@ def get_distance_matrix(
     communication_radius: float,
     noise: float = 0.0,
     alpha: float = 3.15,
-    d0: float = 1.15
+    d0: float = 1.15,
+    heterogeneity: bool = False,
+    power_level: tuple[int, int] = (0, 0)
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Compute distance-based and RSS measurement matrices for nodes.
@@ -102,33 +104,42 @@ def get_distance_matrix(
     # Full pairwise distances
     diffs = X_true[:, None, :] - X_true[None, :, :]
     full_D = np.linalg.norm(diffs, axis=-1)
-    
-    # Connectivity distance matrix
-    D = full_D.copy()
-    D[D > communication_radius] = 0.0
-    B = (D > 0).astype(int)
 
     # Path-loss model baseline power per node
     N = X_true.shape[0]
-    P_i = -np.linspace(10.0, 20.0, N)
+    if not heterogeneity:
+        P_i = np.zeros(N)
+        P_i.fill(power_level[0])
+    else:
+        P_i = np.random.uniform(power_level[0], power_level[1], N)
 
-    # Compute RSS without noise
-    with np.errstate(divide='ignore'):  # ignore log10(0) warnings
-        RSS = P_i[:, None] - 10.0 * alpha * np.log10(full_D / d0)
-    # Symmetrize and remove self-terms
-    RSS = (RSS + RSS.T) / 2.0
-    np.fill_diagonal(RSS, 0.0)
+    RSS = distance_to_RSS(P_i, full_D, alpha, d0)
+    simulated_D, noisy_RSS = RSS_to_distance(P_i, RSS, alpha, d0, noise)
 
-    # Add log-normal multiplicative noise
-    if noise > 0.0:
-        noise_mtx = np.random.default_rng().lognormal(
-            mean=0.0, sigma=noise, size=RSS.shape
-        )
-        noise_mtx = (noise_mtx + noise_mtx.T) / 2.0
-        print(noise_mtx)
-        RSS = RSS + noise_mtx
+    # Connectivity distance matrix
+    D = simulated_D.copy()
+    D[D > communication_radius] = 0.0
+    B = (D > 0).astype(int)
 
     return full_D, D, B, RSS
+
+
+def distance_to_RSS(P_i, full_D, alpha, d0):
+    with np.errstate(divide='ignore'):
+        RSS = P_i[:, None] - 10.0 * alpha * np.log10(full_D / d0)
+    np.fill_diagonal(RSS, 0)
+    return RSS
+
+
+def RSS_to_distance(P_i, RSS, alpha, d0, sigma):
+    if sigma > 0:
+        noise_matrix = np.random.lognormal(mean=0, sigma=sigma, size=RSS.shape)
+        RSS += noise_matrix
+
+    with np.errstate(divide='ignore', invalid='ignore'):
+        D = d0 * 10 ** ((P_i[:, None] - RSS) / (10 * alpha))
+    np.fill_diagonal(D, 0)
+    return D, RSS
 
 
 def n_hop_distance(D: np.ndarray, n_hops: int) -> np.ndarray:
