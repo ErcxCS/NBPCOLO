@@ -85,9 +85,8 @@ if __name__ == "__main__":
     scenario = LocalizationScneario(data_loc)
     Dn = n_hop_distance(scenario.D, 2)
     Bn = nth_hop_adjacency(scenario.D, 1)
-
-    print(scenario.full_D)
-    print(scenario.D)
+    crlb_cov = crlb(Bn, scenario.X_true)
+    print(per_node_peb(crlb_cov))
     """ cov_crlb = crlb(scenario.B, scenario.X_true)
     pebs = per_node_peb(cov_crlb)
     print(pebs) """

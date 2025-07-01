@@ -67,7 +67,8 @@ def generate_scenario(config_path: Path, out_dir: Path) -> None:
     full_D, D, B, RSS = get_distance_matrix(
         X_true, radius, noise,
         heterogeneity=heterogeneity,
-        power_level=transmission_powers[power_level]
+        power_level=transmission_powers[power_level],
+        symetric=True
     )
 
     # Ensure output directory exists

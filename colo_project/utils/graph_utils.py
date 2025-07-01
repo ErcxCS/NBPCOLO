@@ -83,7 +83,8 @@ def get_distance_matrix(
     alpha: float = 3.15,
     d0: float = 1.15,
     heterogeneity: bool = False,
-    power_level: tuple[int, int] = (0, 0)
+    power_level: tuple[int, int] = (0, 0),
+    symetric: bool = True,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Compute distance-based and RSS measurement matrices for nodes.
@@ -114,7 +115,17 @@ def get_distance_matrix(
         P_i = np.random.uniform(power_level[0], power_level[1], N)
 
     RSS = distance_to_RSS(P_i, full_D, alpha, d0)
-    simulated_D, noisy_RSS = RSS_to_distance(P_i, RSS, alpha, d0, noise)
+    if symetric:
+        # Synnetrşze and zero diagonal
+        RSS = (RSS + RSS.T) / 2.0
+    simulated_D, noisy_RSS = RSS_to_distance(
+        P_i,
+        RSS,
+        alpha,
+        d0,
+        noise,
+        symetric
+    )
 
     # Connectivity distance matrix
     D = simulated_D.copy()
@@ -127,19 +138,18 @@ def get_distance_matrix(
 def distance_to_RSS(P_i, full_D, alpha, d0):
     with np.errstate(divide='ignore'):
         RSS = P_i[:, None] - 10.0 * alpha * np.log10(full_D / d0)
-    # Synnetrşze and zero diagonal
-    RSS = (RSS + RSS.T) / 2.0
     np.fill_diagonal(RSS, 0)
     return RSS
 
 
-def RSS_to_distance(P_i, RSS, alpha, d0, sigma):
+def RSS_to_distance(P_i, RSS, alpha, d0, sigma, symetric):
     if sigma > 0:
         rng = np.random
         # switched from log-normal to normal noise
-        # noise_mtx = rng.lognormal(mean=0, sigma=sigma, size=RSS.shape)
-        noise_mtx = rng.normal(loc=0.0, scale=sigma, size=RSS.shape)
-        noise_mtx = (noise_mtx + noise_mtx.T) / 2.0
+        noise_mtx = rng.lognormal(mean=0, sigma=sigma, size=RSS.shape)
+        # noise_mtx = rng.normal(loc=0.0, scale=sigma, size=RSS.shape)
+        if symetric:
+            noise_mtx = (noise_mtx + noise_mtx.T) / 2.0
         np.fill_diagonal(noise_mtx, 0)
         RSS += noise_mtx
     else:

@@ -30,6 +30,7 @@ def crlb(B, X_true, alpha=3.15, d0=1.15, sigma=1.0) -> np.ndarray:
     fim = (1/sigma**2) * J.T @ J
     eps = 1e-6 * np.trace(fim) / fim.shape[0]
     cov_crlb = np.linalg.inv(fim + eps*np.eye(fim.shape[0]))
+    print(summarize_crlb(cov_crlb))
     return cov_crlb
 
 
@@ -74,7 +75,7 @@ def summarize_crlb(cov_crlb: np.ndarray):
     """
     trace = np.trace(cov_crlb)
     N2 = cov_crlb.shape[0]
-    rms = np.sqrt(trace / N2)
+    rms = np.sqrt(trace / N2) * np.sqrt(2)
     det = np.linalg.det(cov_crlb)
     return {"trace": trace, "rms": rms, "det": det}
 
