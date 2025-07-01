@@ -512,13 +512,13 @@ if "__main__" == __name__:
     # network is simulated distance matrix
     # n: n hop connectivity
     # nth_n: assumtion of n hop immidiate neighborhood
-    mds_network, _, _ = get_n_hop(X_true, D, 15, r, a, 1)
+    #mds_network, _, _ = get_n_hop(X_true, D, 15, r, a, 1)
     network, B, C = get_n_hop(X_true, D, 2, r, a, 1)
     zero_count = np.count_nonzero(network)
     print("Number of nonzeros:", zero_count)
     #print(mds_network)
 
-    mds_results = mds_localization(network=mds_network, x_true=X_true, num_anchors=a)
+    #mds_results = mds_localization(network=mds_network, x_true=X_true, num_anchors=a)
 
     #plot_network(X_true, B, n_anchors=a, r=r, D=network, subset=-1)
 
@@ -551,7 +551,7 @@ if "__main__" == __name__:
                                  nn_noise=nn_noise,
                                    benchmark=benchmark,
                                    priors=priors,
-                                   mds_init=mds_results)
+                                   mds_init=None)
     profiler.disable()
     profiler.dump_stats(f'profile_data_centralized.prof')
 
