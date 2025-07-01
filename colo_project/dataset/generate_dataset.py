@@ -47,6 +47,7 @@ def generate_scenario(config_path: Path, out_dir: Path) -> None:
         3: (-3, 14),
         4: (-20, 0)
     }
+    np.random.seed(seed)
 
     # Generate ground truth positions
     X_true, area = generate_targets(

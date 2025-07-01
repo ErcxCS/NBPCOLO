@@ -467,7 +467,7 @@ if "__main__" == __name__:
     i = 10
     k = 4
 
-    priors = False
+    priors = True
     nn_noise = 1
 
     X_true, area = generate_targets(seed=seed,
@@ -514,8 +514,8 @@ if "__main__" == __name__:
     # nth_n: assumtion of n hop immidiate neighborhood
     mds_network, _, _ = get_n_hop(X_true, D, 15, r, a, 1)
     network, B, C = get_n_hop(X_true, D, 2, r, a, 1)
-    zero_count = np.count_nonzero(mds_network == 0)
-    print("Number of zeros:", zero_count)
+    zero_count = np.count_nonzero(network)
+    print("Number of nonzeros:", zero_count)
     #print(mds_network)
 
     mds_results = mds_localization(network=mds_network, x_true=X_true, num_anchors=a)

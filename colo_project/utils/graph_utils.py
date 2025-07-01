@@ -121,24 +121,34 @@ def get_distance_matrix(
     D[D > communication_radius] = 0.0
     B = (D > 0).astype(int)
 
-    return full_D, D, B, RSS
+    return full_D, D, B, noisy_RSS * B
 
 
 def distance_to_RSS(P_i, full_D, alpha, d0):
     with np.errstate(divide='ignore'):
         RSS = P_i[:, None] - 10.0 * alpha * np.log10(full_D / d0)
+    # Synnetrşze and zero diagonal
+    RSS = (RSS + RSS.T) / 2.0
     np.fill_diagonal(RSS, 0)
     return RSS
 
 
 def RSS_to_distance(P_i, RSS, alpha, d0, sigma):
     if sigma > 0:
-        noise_matrix = np.random.lognormal(mean=0, sigma=sigma, size=RSS.shape)
-        RSS += noise_matrix
-
+        rng = np.random
+        # switched from log-normal to normal noise
+        # noise_mtx = rng.lognormal(mean=0, sigma=sigma, size=RSS.shape)
+        noise_mtx = rng.normal(loc=0.0, scale=sigma, size=RSS.shape)
+        noise_mtx = (noise_mtx + noise_mtx.T) / 2.0
+        np.fill_diagonal(noise_mtx, 0)
+        RSS += noise_mtx
+    else:
+        noise_mtx = np.zeros_like(RSS)
+    
     with np.errstate(divide='ignore', invalid='ignore'):
         D = d0 * 10 ** ((P_i[:, None] - RSS) / (10 * alpha))
     np.fill_diagonal(D, 0)
+
     return D, RSS
 
 

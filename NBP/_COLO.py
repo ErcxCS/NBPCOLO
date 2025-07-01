@@ -198,6 +198,7 @@ def get_distance_matrix(X_true: np.ndarray, n_anchors: int, communication_radius
     def RSS_2_distance(P_i, RSS, alpha, d0, sigma: float = 0.2, add_noise: bool = True):
         if add_noise:
             noise_matrix = np.random.lognormal(mean=0, sigma=sigma, size=RSS.shape)
+            #noise_matrix = np.random.lognormal(mean=0, sigma=sigma, size=RSS.shape)
             noise_matrix = (noise_matrix + noise_matrix.T) / 2  # Ensure symmetry
             RSS += noise_matrix
             

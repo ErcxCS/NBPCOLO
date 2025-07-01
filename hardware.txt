@@ -1,0 +1,39 @@
+https://www.direnc.net/37v-li-ion-2000-mah-sarjli-pil-tekli-blister
+3.7V Li-ion: 145,10₺
+
+https://www.direnc.net/esp32-wroom-32d-wifi-bluetooth-gelistirme-modulu
+ESP32-WROOM-32D Wifi Bluetooth Geliştirme Modülü: 251,52₺
+
+https://www.direnc.net/1a-lipo-pil-sarj-devresi
+TP4056 1A Lipo Şarj devresi: 9,19₺
+
+https://www.direnc.net/neo-6m-arduino-gps-shield
+Neo-6m Arduino Shield Mini: 266,03₺
+
+https://www.direnc.net/sandisk-ultra-16gb-80mb
+Sandisk Ultra 16Gb: 338,58₺
+
+https://www.direnc.net/mt3608-2a-type-c-usb-yukseltec-dc-dc-asamali-guc-modulu
+MT3608 boost converter: 18,38₺
+
+
+ESP32-WROOM-32D Wifi Bluetooth Geliştirme Modülü: 251,52₺
+TP4056 1A Lipo Şarj devresi: 9,19₺
+Neo-6m Arduino Shield Mini (GPS): 266,03₺
+3.7V Li-ion (Pil): 145,10₺
+MT3608 boost converter: 18,38₺
+microSD: 338,58₺
+
+cost per node: 671.84 (each with GPS (optional)) not sure if SD is necessary
+with storage cost per node: 1028.8
++ cables
++ casing
+
+
+--------------------- with raspbery pi --------------------------------
+https://www.direnc.net/raspberry-pi-zero-2-w
+Raspberry Pi Zero 2 W: 1.025,41 (+ 773.89₺ compared to ESP32 per node)
+
+most components are interchangeble with esp32 system
+esp32 is basically ardinuo (requires C/C++ implementation) cost efficient
+raspbery pi supports linux/python, easier development

@@ -1,6 +1,7 @@
 from pathlib import Path
 import numpy as np
 from utils.graph_utils import n_hop_distance, nth_hop_adjacency
+from utils.metrics import crlb, per_node_peb
 
 import networkx as nx
 import seaborn as sns
@@ -84,3 +85,9 @@ if __name__ == "__main__":
     scenario = LocalizationScneario(data_loc)
     Dn = n_hop_distance(scenario.D, 2)
     Bn = nth_hop_adjacency(scenario.D, 1)
+
+    print(scenario.full_D)
+    print(scenario.D)
+    """ cov_crlb = crlb(scenario.B, scenario.X_true)
+    pebs = per_node_peb(cov_crlb)
+    print(pebs) """
