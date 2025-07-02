@@ -79,7 +79,7 @@ def generate_targets(
 def get_distance_matrix(
     X_true: np.ndarray,
     communication_radius: float,
-    noise: float = 0.0,
+    noise: float = 1.0,
     alpha: float = 3.15,
     d0: float = 1.15,
     heterogeneity: bool = False,
@@ -92,7 +92,7 @@ def get_distance_matrix(
     Args:
         X_true: true positions (N x dim).
         communication_radius: max distance for connectivity (above -> no link).
-        noise: log-normal noise sigma for RSS (0 -> no noise).
+        noise: normal noise sigma for RSS (0 -> no noise).
         alpha: path-loss exponent.
         d0: reference distance for RSS model.
 
@@ -118,15 +118,20 @@ def get_distance_matrix(
     if symetric:
         # Synnetrşze and zero diagonal
         RSS = (RSS + RSS.T) / 2.0
+
     simulated_D, noisy_RSS = RSS_to_distance(
         P_i,
-        RSS,
+        RSS.copy(),
         alpha,
         d0,
         noise,
         symetric
     )
 
+    """ print(np.abs(RSS - noisy_RSS))
+    rss_diff = (RSS - noisy_RSS)
+    sigma_db_est = np.std(rss_diff)
+    print("empirical sigma_db:", sigma_db_est)  # should be ≈1.0 """
     # Connectivity distance matrix
     D = simulated_D.copy()
     D[D > communication_radius] = 0.0
@@ -146,15 +151,15 @@ def RSS_to_distance(P_i, RSS, alpha, d0, sigma, symetric):
     if sigma > 0:
         rng = np.random
         # switched from log-normal to normal noise
-        noise_mtx = rng.lognormal(mean=0, sigma=sigma, size=RSS.shape)
-        # noise_mtx = rng.normal(loc=0.0, scale=sigma, size=RSS.shape)
+        # noise_mtx = rng.lognormal(mean=0.0, sigma=sigma, size=RSS.shape)
+        noise_mtx = rng.normal(loc=0.0, scale=sigma, size=RSS.shape)
+
         if symetric:
             noise_mtx = (noise_mtx + noise_mtx.T) / 2.0
+
         np.fill_diagonal(noise_mtx, 0)
         RSS += noise_mtx
-    else:
-        noise_mtx = np.zeros_like(RSS)
-    
+
     with np.errstate(divide='ignore', invalid='ignore'):
         D = d0 * 10 ** ((P_i[:, None] - RSS) / (10 * alpha))
     np.fill_diagonal(D, 0)

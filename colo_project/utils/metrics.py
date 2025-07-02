@@ -1,40 +1,33 @@
 import numpy as np
 
 
-def crlb(B, X_true, alpha=3.15, d0=1.15, sigma=1.0) -> np.ndarray:
-    """
-    Compute the Cramér–Rao lower bound covariance for node positions.
-
-    Parameters
-    ----------
-    noisy_RSS : (N,N) array
-      Observed RSS in dB (used only to know which pairs exist).
-    X_true : (N,2) array
-      Ground-truth node positions.
-    alpha : float
-      Path-loss exponent.
-    d0 : float
-      Reference distance (in same units as X_true).
-    sigma : float
-      Standard deviation of additive Gaussian noise in dB.
-
-    Returns
-    -------
-    cov_crlb : (2N,2N) array
-      Minimum covariance matrix for any unbiased estimator of [x1,y1,…,xN,yN].
-    """
-    rows, cols = np.where(np.triu(B, k=1) == 1)
+def crlb(B, X_true, alpha=3.15, d0=1.15, sigma_db=1):
+    # 1) pick your links
+    rows, cols = np.where(np.triu(B, 1) == 1)
     pairs = list(zip(rows, cols))
-    pairs = [(i, j) for i, j in pairs if np.hypot(*(X_true[i]-X_true[j])) > 0]
-    J = jacobian(X_true, pairs, alpha, d0)
-    fim = (1/sigma**2) * J.T @ J
-    eps = 1e-6 * np.trace(fim) / fim.shape[0]
+
+    # 2) build Jacobian and per-link distance sigmas
+    dij_list = []
+    for (i, j) in pairs:
+        d = np.linalg.norm(X_true[i] - X_true[j])
+        dij_list.append(d)
+    J = jacobian(X_true, pairs)  # uses fac=1/d
+
+    # 3) per-link distance noise
+    dsigs = np.array([(np.log(10)/(10*alpha))*d * sigma_db for d in dij_list])
+    Rinv = np.diag(1.0 / dsigs**2)
+
+    # 4) FIM and inversion
+    fim = J.T @ Rinv @ J
+    eps = 1e-6 * np.trace(fim)/fim.shape[0]
     cov_crlb = np.linalg.inv(fim + eps*np.eye(fim.shape[0]))
-    print(summarize_crlb(cov_crlb))
+
+    summary = summarize_crlb(cov_crlb)  # now uses "rms2d"
+    print(summary)
     return cov_crlb
 
 
-def jacobian(X_true: np.ndarray, edges, alpha, d0):
+def jacobian(X_true: np.ndarray, edges, alpha=3.15, d0=1.15):
     """
     X_true: (N, d) array of ground-truth positions
     edges: list of (i, j) node-pairs for which RSS exists
@@ -43,7 +36,7 @@ def jacobian(X_true: np.ndarray, edges, alpha, d0):
     """
     N, d = X_true.shape
     M = len(edges)
-    ln10 = np.log(10)
+    # ln10 = np.log(10)
     J = np.zeros((M, d*N), dtype=float)
 
     for k, (i, j) in enumerate(edges):
@@ -56,7 +49,8 @@ def jacobian(X_true: np.ndarray, edges, alpha, d0):
             continue  # avoid division by zero
 
         # common scalar factor: ∂h/∂d * 1/d
-        fac = -10 * alpha / (ln10 * dij**2)
+        # fac = -10 * alpha / (ln10 * dij**2)
+        fac = 1.0 / dij
 
         J[k, 2*i] = fac * dx  # ∂h/∂x_i
         J[k, 2*i + 1] = fac * dy  # ∂h/∂y_i

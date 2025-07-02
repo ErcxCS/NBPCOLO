@@ -65,7 +65,7 @@ def generate_scenario(config_path: Path, out_dir: Path) -> None:
         anchors = X_true[:num_anchors]
 
     full_D, D, B, RSS = get_distance_matrix(
-        X_true, radius, noise,
+        X_true, radius, noise=noise,
         heterogeneity=heterogeneity,
         power_level=transmission_powers[power_level],
         symetric=True
