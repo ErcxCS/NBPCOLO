@@ -36,7 +36,7 @@ def jacobian(X_true: np.ndarray, edges, alpha=3.15, d0=1.15):
     """
     N, d = X_true.shape
     M = len(edges)
-    # ln10 = np.log(10)
+    ln10 = np.log(10)
     J = np.zeros((M, d*N), dtype=float)
 
     for k, (i, j) in enumerate(edges):
@@ -49,8 +49,8 @@ def jacobian(X_true: np.ndarray, edges, alpha=3.15, d0=1.15):
             continue  # avoid division by zero
 
         # common scalar factor: ∂h/∂d * 1/d
-        # fac = -10 * alpha / (ln10 * dij**2)
-        fac = 1.0 / dij
+        fac = -10 * alpha / (ln10 * dij**2)
+        # fac = 1.0 / dij
 
         J[k, 2*i] = fac * dx  # ∂h/∂x_i
         J[k, 2*i + 1] = fac * dy  # ∂h/∂y_i

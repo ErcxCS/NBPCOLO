@@ -83,7 +83,8 @@ def generate_scenario(config_path: Path, out_dir: Path) -> None:
         D=D,
         B=B,
         RSS=RSS,
-        num_anchors=num_anchors
+        num_anchors=num_anchors,
+        noise=noise
     )
 
     print(f"Saved scenario data to {out_path}")

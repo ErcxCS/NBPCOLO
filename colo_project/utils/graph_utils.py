@@ -128,14 +128,18 @@ def get_distance_matrix(
         symetric
     )
 
-    """ print(np.abs(RSS - noisy_RSS))
-    rss_diff = (RSS - noisy_RSS)
+    """ rss_diff = (RSS - noisy_RSS)
     sigma_db_est = np.std(rss_diff)
     print("empirical sigma_db:", sigma_db_est)  # should be ≈1.0 """
+
     # Connectivity distance matrix
     D = simulated_D.copy()
     D[D > communication_radius] = 0.0
     B = (D > 0).astype(int)
+
+    """ dist_diff = full_D.copy() * B - D
+    sigma_dist_est = np.std(dist_diff)
+    print("empirical dist_est", sigma_dist_est) """
 
     return full_D, D, B, noisy_RSS * B
 
@@ -151,8 +155,8 @@ def RSS_to_distance(P_i, RSS, alpha, d0, sigma, symetric):
     if sigma > 0:
         rng = np.random
         # switched from log-normal to normal noise
-        # noise_mtx = rng.lognormal(mean=0.0, sigma=sigma, size=RSS.shape)
-        noise_mtx = rng.normal(loc=0.0, scale=sigma, size=RSS.shape)
+        noise_mtx = rng.lognormal(mean=0.0, sigma=sigma, size=RSS.shape)
+        # noise_mtx = rng.normal(loc=0.0, scale=sigma, size=RSS.shape)
 
         if symetric:
             noise_mtx = (noise_mtx + noise_mtx.T) / 2.0
