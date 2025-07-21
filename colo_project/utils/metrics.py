@@ -1,6 +1,21 @@
 import numpy as np
 
 
+def euclidean_metrics(targets: np.ndarray, predicts: np.ndarray):
+    """
+    Compute a handful of Euclidean‐error metrics:
+      - RMSE
+      - MAE  (mean absolute error)
+      - MedAE (median absolute error)
+    """
+    errors = np.sqrt(np.sum((targets - predicts)**2, axis=1))
+    rmse = np.sqrt(np.mean(errors**2))
+    mae = np.mean(errors)
+    med = np.median(errors)
+    # print(f"RMSE: {rmse}, MAE: {mae}, MED: {med}")
+    return rmse, mae, med
+
+
 def crlb(B, X_true, alpha=3.15, d0=1.15, sigma_db=1):
     # 1) pick your links
     rows, cols = np.where(np.triu(B, 1) == 1)
@@ -70,8 +85,9 @@ def summarize_crlb(cov_crlb: np.ndarray):
     trace = np.trace(cov_crlb)
     N2 = cov_crlb.shape[0]
     rms = np.sqrt(trace / N2) * np.sqrt(2)
-    det = np.linalg.det(cov_crlb)
-    return {"trace": trace, "rms": rms, "det": det}
+    # det = np.linalg.det(cov_crlb)
+    # return {"trace": trace, "rms": rms, "det": det}
+    return {"CRLB rms threshold": rms}
 
 
 def per_node_peb(cov_crlb: np.ndarray):

@@ -1,0 +1,34 @@
+        if run_mds:
+            use_full_D = False
+            mds = ClassicMDS2(
+                dim=self.X_true.shape[1]
+            )
+
+            hop = self.n_hops
+            mds_dist_graph = n_hop_distance(self.D, hop)
+            if not use_full_D:
+                expected_nonzero = self.D.shape[0] * self.D.shape[1]
+                expected_nonzero -= self.D.shape[0]
+                while np.count_nonzero(mds_dist_graph) < expected_nonzero:
+                    hop += 1
+                    mds_dist_graph = n_hop_distance(self.D, hop)
+
+            self.mds_X_hat = mds.fit_transform(mds_dist_graph)
+            if self.num_anchors > 0:
+                self.mds_X_hat_ab = mds.register_anchors(
+                    self.mds_X_hat,
+                    self.anchors
+                    )
+                print(euclidean_metrics(self.X_true, self.mds_X_hat_ab))
+
+                """ from MDS import ClassicMDS as oldMDS
+                legacyMDS = oldMDS(D=mds_dist_graph)
+                legacy_x_hat = legacyMDS.classic_mds()
+                legacy_anchors_x_hat = legacy_x_hat[self.num_anchors:].copy()
+                x_hat_ab = legacyMDS.least_squares_registration(
+                    anchors=self.anchors.copy(),
+                    anchors_hat=legacy_anchors_x_hat.copy(),
+                    X_hat=legacy_x_hat.copy()
+                )
+                
+                print(euclidean_metrics(self.X_true, x_hat_ab)) """

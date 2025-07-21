@@ -62,3 +62,18 @@ def plot_MRF(X: np.ndarray,
     plt.legend()
     plt.tight_layout()
     plt.show()
+
+
+def plot_results(X, X_hat, num_anchors: int,
+                 show_lines=False,
+                 show_anchors=False):
+    plt.scatter(X[:, 0], X[:, 1], label="True X")
+    plt.scatter(X_hat[:, 0], X_hat[:, 1], label="Predicted Points")
+    plt.legend()
+    if show_anchors:
+        plt.scatter(X[:num_anchors, 0], X[:num_anchors, 1], "ro")
+        plt.scatter(X_hat[:num_anchors, 0], X_hat[:num_anchors, 1], "go")
+    if show_lines:
+        for i in range(len(X)):
+            plt.plot((X[i, 0], X_hat[i, 0]), (X[i, 1], X_hat[i, 1]), "y--")
+    plt.show()

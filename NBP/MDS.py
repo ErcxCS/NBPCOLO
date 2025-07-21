@@ -128,7 +128,6 @@ class ClassicMDS:
         psi_2 = (X_pred @ X_pred.T).diagonal().reshape(-1, 1)
         e = np.ones((self.n_samples, 1))
         error = (psi @ e.T - 2 * X_true @ X_pred.T + e @ psi_2.T).diagonal()
-        print(error)
         self.RMSE = np.sqrt(np.mean(error))
         return self.RMSE
 

@@ -33,6 +33,7 @@ def generate_scenario(config_path: Path, out_dir: Path) -> None:
     placement = cfg.get("placement", True)
     heterogeneity = cfg.get("heterogeneity", False)
     power_level = cfg.get("power_level", -1)
+    symetric = cfg.get("symetric", True)
     # -1: 0 default
     # 0: Bluetooth (0 - 4)
     # 1: Wi-Fi (15 - 20)
@@ -68,7 +69,7 @@ def generate_scenario(config_path: Path, out_dir: Path) -> None:
         X_true, radius, noise=noise,
         heterogeneity=heterogeneity,
         power_level=transmission_powers[power_level],
-        symetric=True
+        symetric=symetric
     )
 
     # Ensure output directory exists
@@ -88,6 +89,7 @@ def generate_scenario(config_path: Path, out_dir: Path) -> None:
     )
 
     print(f"Saved scenario data to {out_path}")
+    return out_path
 
 
 if __name__ == "__main__":
