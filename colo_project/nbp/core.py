@@ -54,6 +54,9 @@ class NBPConfig:
     n_hop: int = 2
     meters: float = 100.0
     use_priors: bool = True
+    # Ablation: drop the negative (push) messages while still using the n-hop
+    # matrix for range smoothing, so the two effects of n_hop can be separated.
+    use_negative: bool = True
     seed: int = 0
 
 
@@ -233,6 +236,8 @@ class NBP:
                     msg = proposals[(r, u)](pool.T)
                     one_hop.append(msg)
                 else:
+                    if not cfg.use_negative:
+                        continue
                     # Reachable within n hops but not heard: absence of a
                     # detection is itself evidence about where u is not.
                     msg = negative_information(
