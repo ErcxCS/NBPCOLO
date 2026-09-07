@@ -1,0 +1,13 @@
+{
+    "num_nodes": 100,
+    "num_anchors": 9,
+    "d_dim": 2,
+    "meters": 100,
+    "radius": 30,
+    "noise": 1.0,
+    "seed": 31,
+    "placement": true,
+    "heterogeneity": false,
+    "power_level": -1,
+    "symetric": true
+}
