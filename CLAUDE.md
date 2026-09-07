@@ -6,111 +6,126 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Research code for **cooperative localization (COLO)** in wireless sensor networks: estimating node
 positions from noisy RSS-derived pairwise range measurements, using **Nonparametric Belief
-Propagation (NBP)** with bounded-box priors, plus a classic-MDS baseline and a planned GNN approach.
-Reference papers are in `Sources/`.
+Propagation (NBP)** with bounded-box priors, a classic-MDS baseline, and a CRLB floor. Reference
+papers are in `Sources/`.
 
-The repo is mid-refactor. `NBP/` is the legacy working prototype; `colo_project/` is the clean
-rewrite it is being ported into. Most of `colo_project/colo/`, `colo_project/gnn/`, and
-`colo_project/scripts/` are still empty stubs — the NBP port is the open work item (see the
-`MDS done. TODO: NBP` commit).
+`NBP/` is the legacy prototype, kept read-only for reference. `colo_project/` is the rewrite, and
+the NBP port is complete. `colo_project/gnn/` is still empty stubs.
 
 ## Environment & commands
 
-Virtualenv lives at `env/` (Python 3.14, gitignored):
-
 ```powershell
 .\env\Scripts\Activate.ps1
-pip install -r colo_project\requirements.txt
+pip install -e .              # from the repo root; makes colo_project importable anywhere
 ```
 
-**All commands must run with `colo_project/` as the working directory, and as modules (`-m`).**
-Imports are top-level absolute (`from utils.graph_utils import ...`) and `pyproject.toml` is empty,
-so nothing is installed as a package — `python dataset/generate_dataset.py` fails with
-`ModuleNotFoundError: No module named 'utils'`.
+Everything is a module under the `colo_project` package and runs from any working directory:
 
 ```powershell
-cd colo_project
-
-# Generate .npz scenarios for every JSON config in a directory
-python -m dataset.generate_dataset --scenarios-dir dataset/scenarios --out-dir dataset/scenarios/out
-
-# Generate + load + run the MDS pipeline for scenarios/test.json (opens matplotlib windows)
-python -m dataset.data_loader
+python -m colo_project.scripts.run_mds --scenario test
+python -m colo_project.scripts.run_nbp --scenario dense --radius 30
+python -m colo_project.dataset.generate_dataset --scenarios-dir colo_project/dataset/scenarios --out-dir <dir>
 ```
 
-There are no tests, no linter config, and no build step. Line lengths follow flake8 defaults (79).
+Runs are **headless by default** (`matplotlib.use("Agg")`); pass `--show` to open figures. Results
+land in `results/<scenario>_seed<n>/` as `metrics*.json`, `arrays*.npz` and PNGs. There are no
+tests and no linter config; line lengths follow flake8 defaults (79).
 
 ## Data pipeline
 
-`dataset/scenarios/<name>.json` → `generate_scenario()` → `dataset/scenarios/<name>/<name>_seed<seed>.npz`
-→ `LocalizationScneario(npz_path)`.
+`dataset/scenarios/<name>.json` → `generate_scenario()` →
+`dataset/scenarios/<name>/<name>_seed<seed>.npz` → `Scenario.load()`.
 
-The `.npz` holds the full ground truth of one experiment and is the contract between generation and
-every algorithm: `X_true` (N×d), `full_D` (true pairwise distances), `D` (noisy distances, zeroed
-beyond `radius`), `B` (binary adjacency), `RSS` (masked by `B`), `num_anchors`, `noise`.
+`Scenario` (`dataset/data_loader.py`) is a frozen dataclass and **pure data** — it computes nothing
+and plots nothing. Algorithms take a `Scenario` and return their own result object. Use
+`load_or_generate(name, scenarios_dir)` rather than wiring paths by hand.
 
-Scenario JSON keys (see `generate_dataset.py` for defaults): `num_nodes`, `num_anchors`, `d_dim`,
-`meters` (square field side, centred on the origin), `radius` (comms range), `noise` (RSS sigma in
-dB), `seed`, `placement` (true = overwrite the first anchors with a hex grid), `heterogeneity` +
-`power_level` (per-node TX power drawn from a band: `-1` uniform 0 dBm, `0` BLE, `1` Wi-Fi,
-`2` cellular, `3` Zigbee, `4` RFID), `symetric` (symmetrise RSS and its noise).
+Deliberately *not* cached on `Scenario`: the n-hop distance graph. NBP wants it at a fixed
+`cfg.n_hop` while MDS escalates the hop count until the graph is connected, so caching one would
+force a shared knob onto two algorithms that disagree.
+
+Scenario JSON keys: `num_nodes`, `num_anchors`, `d_dim`, `meters` (square field side, centred on the
+origin), `radius` (comms range), `noise` (shadowing sigma in **dB**), `seed`, `placement` (true =
+overwrite the first anchors with a hex grid, which also *changes* `num_anchors` to the grid count),
+`heterogeneity` + `power_level` (per-node TX power band: `-1` uniform 0 dBm, `0` BLE, `1` Wi-Fi,
+`2` cellular, `3` Zigbee, `4` RFID), `symetric`.
+
+Two scenarios exist: `test` (4 random anchors, radius 20 — only 29 of 96 targets hear any anchor;
+this is the *non-sufficient connectivity* regime and NBP does poorly on it by design) and `dense`
+(7 grid anchors, radius 30 — well-posed; NBP reaches ~2.5 RMSE against an MDS baseline of ~3.0 and
+a CRLB of ~0.93).
 
 ## Conventions that pervade the codebase
 
-- **Anchors come first.** The first `num_anchors` rows of `X_true` (and of every particle/estimate
-  array) are known-position anchors; everything after is a target to localize. Slices like
-  `X_true[num_anchors:]` and `estimates[node - n_anchors]` are everywhere — off-by-one here is the
-  most common bug class in this code.
-- **Zero means "no edge", not "distance 0".** `D` and `RSS` are masked, so any graph algorithm must
-  convert `0 → inf` before shortest paths (`n_hop_distance` does this) and must not treat masked
-  entries as measurements.
-- **Path-loss constants `alpha=3.15`, `d0=1.15` are duplicated as defaults** in
-  `utils/graph_utils.get_distance_matrix`, `utils/metrics.crlb`, and `utils/metrics.jacobian`.
-  Changing the forward model means changing all three, or the CRLB stops matching the data.
-- Noise is injected in the **RSS domain** (`RSS_to_distance` adds lognormal noise in dB), then
-  inverted back to distance — so distance error grows with range. The CRLB in `metrics.crlb`
-  mirrors this: per-link distance sigma is `(ln10 / (10·alpha)) · d_ij · sigma_db`.
-- `LocalizationScneario` (typo is the real class name) is the single entry point that loads an
-  `.npz` and eagerly computes n-hop graphs, the CRLB covariance, per-node PEB, and — when
-  `run_mds=True` — the whole MDS solution. Constructing it has side effects (prints, matplotlib
-  windows).
+- **Anchors come first.** The first `num_anchors` rows of every `(N, ...)` array are anchors; the
+  rest are targets. Prefer working with full-length `(N, ...)` arrays: anchor particles are copies
+  of a known position, so a weighted belief mean over *all* nodes returns anchor positions exactly.
+  That is why `nbp/core.py` never offsets an index by `num_anchors` — do not reintroduce
+  `estimates[node - n_anchors]` style indexing.
+- **Score on targets only.** Anchors are known, so including them dilutes RMSE with exact zeros.
+- **Zero means "no edge", not "distance 0"** in `D`, `Dn` and `RSS`. Graph code must map `0 → inf`
+  before shortest paths (`n_hop_distance` does) and must not treat masked entries as measurements.
+- **`rng` is a required keyword-only argument** wherever randomness is drawn. There is no
+  `rng=None` default anywhere, on purpose. Streams are derived as
+  `np.random.default_rng([seed, STREAM_*])` (see `constants.py`), and NBP derives a further
+  per-iteration stream, so changing `n_iter` cannot perturb the scenario and running MDS first
+  cannot shift the draws NBP makes.
+- **`scipy.stats.gaussian_kde.resample()` draws from the global legacy `np.random` singleton unless
+  passed `seed=`.** Every call site must pass it or reproducibility silently breaks.
+- **Path-loss constants live in `colo_project/constants.py`** (`ALPHA`, `D0`) and are written into
+  each `.npz`. Read them off the `Scenario` rather than relying on function defaults, so the CRLB
+  uses the parameters that actually generated the data.
+- Noise is injected in the **RSS (dB) domain** as zero-mean Gaussian — which is standard log-normal
+  shadowing, log-normal in linear power. Symmetrization mirrors the upper triangle rather than
+  averaging with the transpose, because averaging would shrink the per-entry sigma by `1/sqrt(2)`.
+  `metrics.range_sigma` converts a dB sigma into the ranging sigma at a distance, and is shared by
+  the CRLB and the NBP proposal so the two cannot drift apart.
+- **The CRLB is anchored.** Range-only measurements are invariant to translation and rotation, so
+  the full `2N x 2N` FIM is rank-deficient by 3 and cannot be inverted. `metrics.crlb` drops the
+  known anchor coordinates and inverts exactly; it returns a `(2*N_targets, 2*N_targets)` covariance
+  and requires `num_anchors > 0`. Do not reintroduce Tikhonov regularization to invert the full FIM
+  — that makes the "bound" a function of `eps` rather than of geometry, and MDS could beat it.
+- Plot helpers **return a figure and never call `plt.show()`**; the caller saves or shows.
 
 ## Module map (`colo_project/`)
 
-- `dataset/` — `generate_dataset.py` (JSON → `.npz`), `data_loader.py` (`.npz` → `LocalizationScneario`).
-- `utils/graph_utils.py` — the forward measurement model (`get_distance_matrix`,
-  `distance_to_RSS`, `RSS_to_distance`), node/anchor placement, and n-hop graph construction
-  (`n_hop_distance` is a dense min-plus DP, O(N³) per hop — it dominates runtime for large N).
-- `utils/metrics.py` — `euclidean_metrics` (RMSE/MAE/MedAE), `crlb`/`jacobian`/`per_node_peb`
-  (the theoretical error floor plotted against algorithm RMSE).
-- `mds/classic_mds.py` — `ClassicMDS.run_mds` is the baseline: raise the hop count until the n-hop
-  distance graph is fully dense, classic MDS embed, then anchor registration (affine via pseudo-
-  inverse, or rigid via orthogonal Procrustes). MDS output also seeds NBP initialisation.
-- `colo/` — the NBP port target: `bbox.py`, `particles.py`, `potentials.py`, `nbp.py` (all empty).
-- `utils/visualizations.py` — `plot_MRF` (network graph), `plot_results` (true vs. estimated, with
-  error lines). Both call `plt.show()` and block.
+- `constants.py` — `ALPHA`, `D0`, and the `STREAM_*` RNG stream ids.
+- `dataset/` — `generate_dataset.py` (JSON → `.npz`), `data_loader.py` (`Scenario`, `load_or_generate`).
+- `utils/graph_utils.py` — the forward measurement model and n-hop graph construction.
+  `n_hop_distance` is a dense min-plus DP, O(N^3) per hop, and dominates runtime for large N.
+- `utils/metrics.py` — `euclidean_metrics`, `range_sigma`, anchored `crlb`/`jacobian`/`per_node_peb`.
+- `utils/io.py` — `result_dir`, `save_json`/`save_arrays`, `git_sha` (resolved against this repo, not cwd).
+- `mds/classic_mds.py` — `run_mds` returns `(x_hat, affine, rigid)`; rigid (Procrustes) is
+  substantially better than affine on these scenarios.
+- `nbp/` — `bbox.py`, `potentials.py` (both pure, no RNG), `particles.py` (all RNG), `core.py`
+  (`NBP`, `NBPConfig`, `NBPState`, `NBPResult`).
+- `scripts/` — `run_mds.py`, `run_nbp.py`. `run_gnn.py` is an empty stub.
 
-## Porting from `NBP/` (legacy)
+## NBP specifics
 
-`NBP/optimized_NBP.py` is the reference implementation to port; `NBP/_COLO.py` (2.9k lines) is the
-grab-bag of helpers it imports via `from _COLO import *`. The pieces that map onto the empty
-`colo/` stubs:
+One iteration is two phases. **Phase A** builds, for every one-hop pair `r → u`, a weighted KDE over
+the particles of r shifted onto the measured range annulus, weighted by detection probability and by
+the *cavity* belief of r (`weights[r] / incoming[r, u]`, i.e. the belief of r with the previous
+message from u divided out). **Phase B** multiplies each incoming message per node and resamples.
 
-- `bbox.py` ← `create_bbox`: intersect per-anchor axis-aligned boxes of half-width `D[i,j]` to bound
-  each target's feasible region.
-- `particles.py` ← `generate_particles`: uniform samples inside each box; anchors get `n_particles`
-  copies of their own position.
-- `potentials.py` ← `_COLO.mono_potential_bbox` (uniform prior over a box) and `_COLO.duo_potential`
-  (Gaussian pairwise range likelihood).
-- `nbp.py` ← `NBP.iterative_NBP` / `NBP.NBP_iteration`: per iteration, approximate each message
-  `r→u` by shifting node r's particles, weighting by detection probability and the reciprocal of
-  the reverse message, fitting a `gaussian_kde` proposal and resampling; then multiply incoming
-  messages per node to update the belief and resample to `n_samples`. Non-neighbours within n-hop
-  range contribute *negative* information (`1 - Σ w·p_detect`). Estimates are the weighted particle
-  means (`np.einsum('ijk,ij->ik', ...)`).
+`incoming` is indexed `[receiver, sender]`: `incoming[u, r]` is the message `r → u` evaluated at the
+particles of u.
 
-Note the legacy code carries a different, incompatible `get_distance_matrix` signature and its own
-`generate_targets`/`RMSE` — port the algorithm, not the helpers; `colo_project/utils/` already has
-the current versions.
+`self.D` is the **n-hop** distance matrix and `self.C` is the **one-hop** adjacency. That split is
+the core of the algorithm: one-hop neighbours send positive messages, while nodes reachable within
+n hops that were *not* heard send negative information (`1 - E[detect]`). Do not collapse the two.
 
-`colo_project/save.txt` is a scratch snippet of a previous MDS wiring, not live code.
+Known behaviour, not a bug: RMSE bottoms out around iteration 5 and drifts up slightly afterwards
+(particle depletion / overconfidence). Runtime is ~25-60s for N=100, P=125, 10 iterations; the hot
+path is `gaussian_kde`, and the negative-information block is the thing to vectorize first if that
+ever matters. Any optimization must preserve the bitwise-identical trace at a fixed seed.
+
+## Legacy `NBP/` (reference only, never modified)
+
+`optimized_NBP.py` is the version the port came from; `NBP_iteration2` there is dead but is the
+better-documented reference. `_COLO.py` (2.9k lines) is its helper grab-bag. Capabilities
+deliberately **not** ported: the multi-config sweep runner (`run_experiment`), MDS warm-start for
+NBP (`mds_init`, only in `COLO.py`), Procrustes similarity tracking, `error_vs_neighborhood`, and
+the weighted SMACOF / spectral-layout MDS baselines in `Test.py`. The legacy results dict reported
+`var(D_noisy - D_clean)` under the key `"CRLB"` — a ranging variance in m^2, plotted against a
+positioning RMSE in m. It is not a bound; use `metrics.crlb`.
