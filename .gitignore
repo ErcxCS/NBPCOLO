@@ -12,3 +12,4 @@ env/**
 ./NBP/__pycache__/
 __pycache__/
 *.egg-info/
+results/

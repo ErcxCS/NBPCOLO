@@ -58,22 +58,40 @@ def plot_MRF(X: np.ndarray,
                         xytext=(0, 10), ha='center',
                         fontsize=12, color='g')
     ax.grid(True, linestyle='--', alpha=0.7)
-    plt.title("Network Coverage")
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
+    ax.set_title("Network Coverage")
+    ax.legend()
+    fig.tight_layout()
+    return fig
 
 
 def plot_results(X, X_hat, num_anchors: int,
                  show_lines=False,
-                 show_anchors=False):
-    plt.scatter(X[:, 0], X[:, 1], label="True X")
-    plt.scatter(X_hat[:, 0], X_hat[:, 1], label="Predicted Points")
-    plt.legend()
+                 show_anchors=False,
+                 ax=None,
+                 title=None):
+    """
+    True vs. estimated positions, optionally joined by error lines.
+
+    Returns the figure; the caller decides whether to savefig or show.
+    """
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(6, 6))
+    else:
+        fig = ax.figure
+
+    ax.scatter(X[:, 0], X[:, 1], label="True X")
+    ax.scatter(X_hat[:, 0], X_hat[:, 1], label="Predicted Points")
     if show_anchors:
-        plt.scatter(X[:num_anchors, 0], X[:num_anchors, 1], "ro")
-        plt.scatter(X_hat[:num_anchors, 0], X_hat[:num_anchors, 1], "go")
+        ax.scatter(X[:num_anchors, 0], X[:num_anchors, 1],
+                   c="r", marker="*", s=200, label="Anchors (true)")
+        ax.scatter(X_hat[:num_anchors, 0], X_hat[:num_anchors, 1],
+                   c="g", marker="*", s=200, label="Anchors (est.)")
     if show_lines:
         for i in range(len(X)):
-            plt.plot((X[i, 0], X_hat[i, 0]), (X[i, 1], X_hat[i, 1]), "y--")
-    plt.show()
+            ax.plot((X[i, 0], X_hat[i, 0]), (X[i, 1], X_hat[i, 1]), "y--")
+    if title:
+        ax.set_title(title)
+    ax.set_aspect("equal", adjustable="datalim")
+    ax.legend()
+    fig.tight_layout()
+    return fig

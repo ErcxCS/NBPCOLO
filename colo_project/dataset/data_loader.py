@@ -1,78 +1,98 @@
+from dataclasses import dataclass
 from pathlib import Path
+
 import numpy as np
-from colo_project.utils.graph_utils import n_hop_distance, nth_hop_adjacency
-from colo_project.utils.metrics import crlb, per_node_peb, euclidean_metrics
-from colo_project.mds.classic_mds import ClassicMDS
-from colo_project.utils.visualizations import plot_results
 
 
-class LocalizationScneario:
-    def __init__(self,
-                 npz_path: Path,
-                 noise: float = None,
-                 n_hop: int = 2,
-                 n_adj: int = 1,
-                 run_mds: bool = True):
+@dataclass(frozen=True)
+class Scenario:
+    """
+    One generated localization scenario, loaded from a .npz.
+
+    Pure data: loading a Scenario computes nothing and plots nothing.
+    Algorithms take a Scenario and return their own result object; derived
+    quantities (n-hop graphs, CRLB) are computed by whoever needs them, because
+    NBP and MDS disagree about which hop count they want.
+
+    Node ordering: the first `num_anchors` rows of every (N, ...) array are
+    anchors with known positions; the rest are targets to localize.
+    """
+
+    name: str
+    seed: int
+    X_true: np.ndarray      # (N, d) ground truth positions
+    full_D: np.ndarray      # (N, N) true pairwise distances
+    D: np.ndarray           # (N, N) noisy distances, 0 beyond comms radius
+    B: np.ndarray           # (N, N) binary adjacency
+    RSS: np.ndarray         # (N, N) received signal strength, masked by B
+    num_anchors: int
+    noise: float            # shadowing sigma in dB
+    alpha: float            # path-loss exponent used to generate D
+    d0: float               # path-loss reference distance used to generate D
+
+    @property
+    def anchors(self) -> np.ndarray:
+        return self.X_true[:self.num_anchors]
+
+    @property
+    def targets(self) -> np.ndarray:
+        return self.X_true[self.num_anchors:]
+
+    @property
+    def n_nodes(self) -> int:
+        return self.X_true.shape[0]
+
+    @property
+    def n_targets(self) -> int:
+        return self.n_nodes - self.num_anchors
+
+    @property
+    def dim(self) -> int:
+        return self.X_true.shape[1]
+
+    @property
+    def mean_degree(self) -> float:
+        return float(self.B.sum(axis=1).mean())
+
+    @classmethod
+    def load(cls, npz_path: Path, name: str = None) -> "Scenario":
         data = np.load(npz_path, allow_pickle=True)
-        self.X_true: np.ndarray = data["X_true"]
-        self.full_D: np.ndarray = data["full_D"]
-        self.D: np.ndarray = data["D"]
-        self.B: np.ndarray = data["B"]
-        self.RSS: np.ndarray = data["RSS"]
-        self.num_anchors = int(data["num_anchors"])
-        self.noise = float(data["noise"])
-        self.alpha = float(data["alpha"])
-        self.d0 = float(data["d0"])
-
-        self.n_hops, self.n_adj = n_hop, n_adj
-        self.Dn = n_hop_distance(self.D, self.n_hops)
-        self.Bn = nth_hop_adjacency(self.D, self.n_adj)
-        self.anchors = self.X_true[:self.num_anchors]
-
-        if noise is not None:
-            self.noise = noise
-
-        self.crlb_cov = crlb(
-            self.B, self.X_true, self.num_anchors,
-            alpha=self.alpha, d0=self.d0, sigma_db=self.noise
+        seed = int(data["seed"])
+        if name is None:
+            # Strip the "_seed<n>" suffix the generator appends.
+            name = Path(npz_path).stem.removesuffix(f"_seed{seed}")
+        return cls(
+            name=name,
+            seed=seed,
+            X_true=data["X_true"],
+            full_D=data["full_D"],
+            D=data["D"],
+            B=data["B"],
+            RSS=data["RSS"],
+            num_anchors=int(data["num_anchors"]),
+            noise=float(data["noise"]),
+            alpha=float(data["alpha"]),
+            d0=float(data["d0"]),
         )
-        self.pebs = per_node_peb(self.crlb_cov)
-
-        if run_mds:
-            mds = ClassicMDS(
-                dim=self.X_true.shape[1]
-            )
-            self.mds_xhat, self.mds_registered, _ = mds.run_mds(
-                self.X_true,
-                self.D,
-                self.full_D,
-                self.num_anchors,
-                use_full_D=False
-            )
-            self.mds_rmse, mds_mae, mds_med = euclidean_metrics(
-                self.X_true,
-                self.mds_registered)
-            print(f"MDS RMSE: {self.mds_rmse}")
-            plot_results(self.X_true, self.mds_xhat, self.num_anchors, show_anchors=False, show_lines=True)
-            plot_results(self.X_true, self.mds_registered, self.num_anchors, show_anchors=False, show_lines=True)
 
 
+def load_or_generate(name: str, scenarios_dir: Path) -> Scenario:
+    """
+    Load scenario `name`, generating its .npz from `<name>.json` if missing.
 
-
-def generate_test(scneario_name: str) -> LocalizationScneario:
+    Shared by the run_* scripts so neither has to know the layout convention:
+    config at `<scenarios_dir>/<name>.json`, output under
+    `<scenarios_dir>/<name>/<name>_seed<seed>.npz`.
+    """
     from colo_project.dataset.generate_dataset import generate_scenario
-    scenario_dir = f"./dataset/scenarios/{scneario_name}"
-    out_dir = Path(scenario_dir)
-    config_path = Path(scenario_dir + ".json")
-    scenario_path = generate_scenario(config_path, out_dir)
-    scenario = LocalizationScneario(
-        npz_path=scenario_path,
-        noise=None,
-        n_hop=2,
-        n_adj=1
-    )
-    return scenario
 
+    scenarios_dir = Path(scenarios_dir)
+    config_path = scenarios_dir / f"{name}.json"
+    if not config_path.exists():
+        raise FileNotFoundError(f"No scenario config at {config_path}")
 
-if __name__ == "__main__":
-    scenario = generate_test("test")
+    out_dir = scenarios_dir / name
+    existing = sorted(out_dir.glob(f"{name}_seed*.npz"))
+    if not existing:
+        return Scenario.load(generate_scenario(config_path, out_dir), name=name)
+    return Scenario.load(existing[0], name=name)
