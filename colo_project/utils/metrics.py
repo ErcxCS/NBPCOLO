@@ -1,5 +1,7 @@
 import numpy as np
 
+from colo_project.constants import ALPHA, D0
+
 
 def euclidean_metrics(targets: np.ndarray, predicts: np.ndarray):
     """
@@ -16,33 +18,61 @@ def euclidean_metrics(targets: np.ndarray, predicts: np.ndarray):
     return rmse, mae, med
 
 
-def crlb(B, X_true, alpha=3.15, d0=1.15, sigma_db=1):
+def range_sigma(d, sigma_db, alpha=ALPHA):
+    """
+    Convert a dB shadowing sigma into a ranging sigma at distance d.
+
+    Inverting the log-distance path-loss model maps a dB perturbation onto a
+    multiplicative distance error, so the ranging sigma grows linearly with d:
+        sigma_d = (ln10 / (10*alpha)) * d * sigma_db
+
+    Shared by the CRLB and the NBP proposal so both use one noise model.
+    """
+    return (np.log(10) / (10 * alpha)) * np.asarray(d) * sigma_db
+
+
+def crlb(B, X_true, num_anchors, alpha=ALPHA, d0=D0, sigma_db=1):
+    """
+    Anchored CRLB covariance for the target coordinates.
+
+    Range-only measurements are invariant to translation and rotation, so the
+    full 2N x 2N FIM is always rank-deficient by 3 (in 2D) and cannot be
+    inverted. Anchors resolve that gauge freedom: their positions are known, so
+    they are dropped from the parameter vector rather than estimated. What is
+    left is full rank and inverts exactly, with no regularization needed.
+
+    Returns cov of shape (2*N_targets, 2*N_targets), ordered x0,y0,x1,y1,...
+    over the target nodes only (i.e. X_true[num_anchors:]).
+    """
+    if num_anchors <= 0:
+        raise ValueError(
+            "CRLB needs at least one anchor: without anchors the FIM is "
+            "singular (translation/rotation) and no absolute bound exists."
+        )
+
     # 1) pick your links
     rows, cols = np.where(np.triu(B, 1) == 1)
     pairs = list(zip(rows, cols))
 
     # 2) build Jacobian and per-link distance sigmas
-    dij_list = []
-    for (i, j) in pairs:
-        d = np.linalg.norm(X_true[i] - X_true[j])
-        dij_list.append(d)
-    J = jacobian(X_true, pairs)  # uses fac=1/d
+    dij = np.array(
+        [np.linalg.norm(X_true[i] - X_true[j]) for (i, j) in pairs]
+    )
+    J = jacobian(X_true, pairs, alpha=alpha, d0=d0)
 
     # 3) per-link distance noise
-    dsigs = np.array([(np.log(10)/(10*alpha))*d * sigma_db for d in dij_list])
+    dsigs = range_sigma(dij, sigma_db, alpha)
     Rinv = np.diag(1.0 / dsigs**2)
 
-    # 4) FIM and inversion
+    # 4) FIM over target coordinates only, then invert
     fim = J.T @ Rinv @ J
-    eps = 1e-6 * np.trace(fim)/fim.shape[0]
-    cov_crlb = np.linalg.inv(fim + eps*np.eye(fim.shape[0]))
+    targets = np.arange(2 * num_anchors, 2 * X_true.shape[0])
+    fim = fim[np.ix_(targets, targets)]
 
-    summary = summarize_crlb(cov_crlb)  # now uses "rms2d"
-    print(summary)
-    return cov_crlb
+    return np.linalg.inv(fim)
 
 
-def jacobian(X_true: np.ndarray, edges, alpha=3.15, d0=1.15):
+def jacobian(X_true: np.ndarray, edges, alpha=ALPHA, d0=D0):
     """
     X_true: (N, d) array of ground-truth positions
     edges: list of (i, j) node-pairs for which RSS exists

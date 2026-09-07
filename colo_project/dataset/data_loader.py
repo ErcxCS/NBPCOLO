@@ -1,10 +1,9 @@
 from pathlib import Path
 import numpy as np
-from utils.graph_utils import n_hop_distance, nth_hop_adjacency
-from utils.metrics import crlb, per_node_peb
-from mds.classic_mds import ClassicMDS
-from utils.metrics import euclidean_metrics
-from utils.visualizations import plot_results
+from colo_project.utils.graph_utils import n_hop_distance, nth_hop_adjacency
+from colo_project.utils.metrics import crlb, per_node_peb, euclidean_metrics
+from colo_project.mds.classic_mds import ClassicMDS
+from colo_project.utils.visualizations import plot_results
 
 
 class LocalizationScneario:
@@ -22,6 +21,8 @@ class LocalizationScneario:
         self.RSS: np.ndarray = data["RSS"]
         self.num_anchors = int(data["num_anchors"])
         self.noise = float(data["noise"])
+        self.alpha = float(data["alpha"])
+        self.d0 = float(data["d0"])
 
         self.n_hops, self.n_adj = n_hop, n_adj
         self.Dn = n_hop_distance(self.D, self.n_hops)
@@ -31,14 +32,17 @@ class LocalizationScneario:
         if noise is not None:
             self.noise = noise
 
-        self.crlb_cov = crlb(self.B, self.X_true, sigma_db=self.noise)
+        self.crlb_cov = crlb(
+            self.B, self.X_true, self.num_anchors,
+            alpha=self.alpha, d0=self.d0, sigma_db=self.noise
+        )
         self.pebs = per_node_peb(self.crlb_cov)
 
         if run_mds:
             mds = ClassicMDS(
                 dim=self.X_true.shape[1]
             )
-            self.mds_xhat, self.mds_registered = mds.run_mds(
+            self.mds_xhat, self.mds_registered, _ = mds.run_mds(
                 self.X_true,
                 self.D,
                 self.full_D,
@@ -56,7 +60,7 @@ class LocalizationScneario:
 
 
 def generate_test(scneario_name: str) -> LocalizationScneario:
-    from dataset.generate_dataset import generate_scenario
+    from colo_project.dataset.generate_dataset import generate_scenario
     scenario_dir = f"./dataset/scenarios/{scneario_name}"
     out_dir = Path(scenario_dir)
     config_path = Path(scenario_dir + ".json")

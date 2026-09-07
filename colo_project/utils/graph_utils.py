@@ -1,5 +1,7 @@
 import numpy as np
-from typing import Optional, Tuple, List
+from typing import Tuple, List
+
+from colo_project.constants import ALPHA, D0
 
 
 def generate_anchors(
@@ -45,25 +47,25 @@ def generate_anchors(
 
 
 def generate_targets(
-    seed: Optional[int],
     num_nodes: int,
     dim: int,
-    deployment_area: float
+    deployment_area: float,
+    *,
+    rng: np.random.Generator,
 ) -> Tuple[np.ndarray, Tuple[float, float, float, float]]:
     """
     generate node positions within deployment area centered at the origin.
 
     Args:
-        seed: random seed (None for RNG default).
         num_nodes: number of nodes to generate.
         dim: spatial dimensions (usually 2).
         deployment_area: half-length of the square area.
+        rng: generator for the position draws (required).
 
     Returns:
         X: np.ndarray shape (num_nodes, dim) of node coordinates.
         bounds: tuple (x_min, x_max, y_min, y_max).
     """
-    rng = np.random.default_rng(seed)
     half = deployment_area / 2.0
     bounds = (-half, half, -half, half)
     x_min, x_max, y_min, y_max = bounds
@@ -80,11 +82,13 @@ def get_distance_matrix(
     X_true: np.ndarray,
     communication_radius: float,
     noise: float = 1.0,
-    alpha: float = 3.15,
-    d0: float = 1.15,
+    alpha: float = ALPHA,
+    d0: float = D0,
     heterogeneity: bool = False,
     power_level: tuple[int, int] = (0, 0),
     symetric: bool = True,
+    *,
+    rng: np.random.Generator,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Compute distance-based and RSS measurement matrices for nodes.
@@ -92,9 +96,10 @@ def get_distance_matrix(
     Args:
         X_true: true positions (N x dim).
         communication_radius: max distance for connectivity (above -> no link).
-        noise: normal noise sigma for RSS (0 -> no noise).
+        noise: zero-mean Gaussian sigma in dB for RSS (0 -> no noise).
         alpha: path-loss exponent.
         d0: reference distance for RSS model.
+        rng: generator for the shadowing and power draws (required).
 
     Returns:
         full_D: full Euclidean distance matrix (N x N).
@@ -112,11 +117,11 @@ def get_distance_matrix(
         P_i = np.zeros(N)
         P_i.fill(power_level[0])
     else:
-        P_i = np.random.uniform(power_level[0], power_level[1], N)
+        P_i = rng.uniform(power_level[0], power_level[1], N)
 
     RSS = distance_to_RSS(P_i, full_D, alpha, d0)
     if symetric:
-        # Synnetrşze and zero diagonal
+        # Symmetrize and zero diagonal
         RSS = (RSS + RSS.T) / 2.0
 
     simulated_D, noisy_RSS = RSS_to_distance(
@@ -125,21 +130,14 @@ def get_distance_matrix(
         alpha,
         d0,
         noise,
-        symetric
+        symetric,
+        rng=rng
     )
-
-    """ rss_diff = (RSS - noisy_RSS)
-    sigma_db_est = np.std(rss_diff)
-    print("empirical sigma_db:", sigma_db_est)  # should be ≈1.0 """
 
     # Connectivity distance matrix
     D = simulated_D.copy()
     D[D > communication_radius] = 0.0
     B = (D > 0).astype(int)
-
-    """ dist_diff = full_D.copy() * B - D
-    sigma_dist_est = np.std(dist_diff)
-    print("empirical dist_est", sigma_dist_est) """
 
     return full_D, D, B, noisy_RSS * B
 
@@ -151,15 +149,22 @@ def distance_to_RSS(P_i, full_D, alpha, d0):
     return RSS
 
 
-def RSS_to_distance(P_i, RSS, alpha, d0, sigma, symetric):
+def RSS_to_distance(P_i, RSS, alpha, d0, sigma, symetric, *, rng):
+    """
+    Invert the path-loss model back to distance, adding log-normal shadowing.
+
+    Shadowing is log-normal in linear power, i.e. zero-mean Gaussian in dB, so
+    `sigma` is a dB standard deviation. This is what metrics.crlb assumes.
+    """
     if sigma > 0:
-        rng = np.random
-        # switched from log-normal to normal noise
-        noise_mtx = rng.lognormal(mean=0.0, sigma=sigma, size=RSS.shape)
-        # noise_mtx = rng.normal(loc=0.0, scale=sigma, size=RSS.shape)
+        noise_mtx = rng.normal(loc=0.0, scale=sigma, size=RSS.shape)
 
         if symetric:
-            noise_mtx = (noise_mtx + noise_mtx.T) / 2.0
+            # Mirror the upper triangle instead of averaging with the
+            # transpose: averaging would shrink the per-entry sigma by
+            # 1/sqrt(2) and silently break the CRLB, which is handed `sigma`.
+            iu = np.triu_indices_from(noise_mtx, k=1)
+            noise_mtx[(iu[1], iu[0])] = noise_mtx[iu]
 
         np.fill_diagonal(noise_mtx, 0)
         RSS += noise_mtx

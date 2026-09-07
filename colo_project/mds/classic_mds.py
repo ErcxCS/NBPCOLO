@@ -1,5 +1,5 @@
 import numpy as np
-from utils.graph_utils import n_hop_distance
+from colo_project.utils.graph_utils import n_hop_distance
 
 
 class ClassicMDS:
@@ -48,6 +48,8 @@ class ClassicMDS:
             anchors_hat: np.ndarray,
             X_hat: np.ndarray
     ):
+        anchors = anchors.copy()
+        anchors_hat = anchors_hat.copy()
         anchors_hat[1:] -= anchors_hat[0]
         anchors[1:] -= anchors[0]
         Q = np.linalg.pinv(anchors_hat) @ anchors
@@ -63,30 +65,36 @@ class ClassicMDS:
             num_anchors: int,
             use_full_D: bool = False
     ):
-        hop = 2
-        self.mds_dist_graph = n_hop_distance(D, hop)
-        if not use_full_D:
+        if use_full_D:
+            self.mds_dist_graph = full_D
+        else:
+            hop = 2
+            self.mds_dist_graph = n_hop_distance(D, hop)
             expected_nonzero = D.shape[0] * D.shape[1] - D.shape[0]
             while np.count_nonzero(self.mds_dist_graph) < expected_nonzero:
                 hop += 1
                 self.mds_dist_graph = n_hop_distance(D, hop)
-        else:
-            self.mds_dist_graph = full_D
-        
-        self.fit_transform(self.mds_dist_graph)
-        if num_anchors > 0:
-            self.anchors = X_true[:num_anchors]$
-            self.anchors_hat = self.x_hat[:num_anchors]
-            self.register_anchors_affine(
-                anchors=self.anchors.copy(),
-                anchors_hat=self.anchors_hat.copy(),
-                X_hat=self.x_hat
-            )
-            self.register_anchors_rigid(
-                X_hat=self.x_hat.copy(),
-                anchors_true=self.anchors.copy()
-            )
 
-        return self.x_hat, self.x_hat_ab_affine
+        self.fit_transform(self.mds_dist_graph)
+        if num_anchors == 0:
+            # Nothing to register against: the embedding is only defined up to
+            # rotation/reflection/translation.
+            self.x_hat_ab_affine = None
+            self.x_hat_ab_rigid = None
+            return self.x_hat, None, None
+
+        self.anchors = X_true[:num_anchors]
+        self.anchors_hat = self.x_hat[:num_anchors]
+        self.register_anchors_affine(
+            anchors=self.anchors,
+            anchors_hat=self.anchors_hat,
+            X_hat=self.x_hat
+        )
+        self.register_anchors_rigid(
+            X_hat=self.x_hat,
+            anchors_true=self.anchors
+        )
+
+        return self.x_hat, self.x_hat_ab_affine, self.x_hat_ab_rigid
 
 

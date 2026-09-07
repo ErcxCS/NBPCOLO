@@ -3,22 +3,27 @@ import json
 from pathlib import Path
 import numpy as np
 
-from utils.graph_utils import generate_anchors, generate_targets
-from utils.graph_utils import get_distance_matrix
+from colo_project.utils.graph_utils import generate_anchors, generate_targets
+from colo_project.utils.graph_utils import get_distance_matrix
+from colo_project.constants import ALPHA, D0, STREAM_DATA
 
 
-def generate_scenario(config_path: Path, out_dir: Path) -> None:
+def generate_scenario(config_path: Path, out_dir: Path) -> Path:
     """
     Create and save a graph for one scenario defined by a JSON config.
 
-    Saves a .npz files containing:
-        - X_true: Ground truth posiitons (N x d)
+    Saves a .npz file containing:
+        - X_true: Ground truth positions (N x d)
         - full_D: Full N x N distance matrix
         - D: Thresholded distance matrix (N x N)
         - B: Binary adjacency matrix (N x N)
         - RSS: Received signal strength within binary adjacency
-        - placement: True/False, geometric anchor placement
-        - num_anchors: firs num_anchors in X_true are anchors
+        - num_anchors: first num_anchors in X_true are anchors
+        - noise: shadowing sigma in dB used to generate D
+        - alpha, d0: path-loss parameters used to generate D
+        - seed: the seed the scenario was generated from
+
+    Returns the path of the saved .npz.
     """
     # Load scenario config
     cfg = json.loads(config_path.read_text())
@@ -48,13 +53,13 @@ def generate_scenario(config_path: Path, out_dir: Path) -> None:
         3: (-3, 14),
         4: (-20, 0)
     }
-    np.random.seed(seed)
+    rng = np.random.default_rng([seed, STREAM_DATA])
 
     # Generate ground truth positions
     X_true, area = generate_targets(
-        seed,
         num_nodes, d_dim,
-        meters
+        meters,
+        rng=rng
     )
 
     # Anchor generation logic if needed
@@ -67,9 +72,11 @@ def generate_scenario(config_path: Path, out_dir: Path) -> None:
 
     full_D, D, B, RSS = get_distance_matrix(
         X_true, radius, noise=noise,
+        alpha=ALPHA, d0=D0,
         heterogeneity=heterogeneity,
         power_level=transmission_powers[power_level],
-        symetric=symetric
+        symetric=symetric,
+        rng=rng
     )
 
     # Ensure output directory exists
@@ -85,7 +92,10 @@ def generate_scenario(config_path: Path, out_dir: Path) -> None:
         B=B,
         RSS=RSS,
         num_anchors=num_anchors,
-        noise=noise
+        noise=noise,
+        alpha=ALPHA,
+        d0=D0,
+        seed=seed
     )
 
     print(f"Saved scenario data to {out_path}")
