@@ -142,6 +142,23 @@ message figure is its record). This is recording, not computing: nothing in it d
 nothing is inserted between two RNG consumers, so the trace stays bitwise identical. ~3 MB at N=100,
 P=125, n_iter=10, linear in every knob — gate it behind a config flag before N reaches the thousands.
 
+`cfg.warm_start` seeds the particles from a global layout (MDS unless the caller passes
+`init_positions`) instead of from the anchor boxes or the whole field, with `cfg.warm_halfwidth`
+as the seed box half-width (`None` -> `radius / 2`). It **replaces** the anchor bboxes rather than
+intersecting with them, so warm-vs-cold stays a clean A/B; with anchors present the MDS layout was
+registered using those anchors anyway. Off by default and a cold run is bitwise unchanged. This is
+the `mds_init` legacy had, minus its two bugs: legacy made every particle an exact copy of the MDS
+position (zero initial spread, degenerate first KDE) and overwrote the anchor rows while doing it.
+Never seed from a truth-aligned layout -- `run_nbp` captures `mds_seed` *before* it replaces
+`rigid` with the Procrustes-to-truth used for anchor-free scoring.
+
+Anchor-free (`num_anchors == 0`) runs go through `metrics.crlb_anchor_free` and `align_rigid`
+rather than `crlb`: with no anchors the FIM is singular by exactly 3 (two translations plus
+rotation, written down analytically in `gauge_basis`), so the bound is taken on the orthogonal
+complement of that nullspace, and error is scored after a free Procrustes as well as raw. Cold and
+anchor-free, NBP collapses to ~1/6 of the true extent on iteration 1 and does not recover; see
+`Report2.md` for why, and do not reach for a larger `n_hop` as the fix.
+
 Known behaviour, not a bug: RMSE bottoms out around iteration 5 and drifts up slightly afterwards
 (particle depletion / overconfidence). Runtime is ~25-60s for N=100, P=125, 10 iterations; the hot
 path is `gaussian_kde`, and the negative-information block is the thing to vectorize first if that
@@ -151,8 +168,8 @@ ever matters. Any optimization must preserve the bitwise-identical trace at a fi
 
 `optimized_NBP.py` is the version the port came from; `NBP_iteration2` there is dead but is the
 better-documented reference. `_COLO.py` (2.9k lines) is its helper grab-bag. Capabilities
-deliberately **not** ported: the multi-config sweep runner (`run_experiment`), MDS warm-start for
-NBP (`mds_init`, only in `COLO.py`), Procrustes similarity tracking, `error_vs_neighborhood`, and
-the weighted SMACOF / spectral-layout MDS baselines in `Test.py`. The legacy results dict reported
-`var(D_noisy - D_clean)` under the key `"CRLB"` — a ranging variance in m^2, plotted against a
-positioning RMSE in m. It is not a bound; use `metrics.crlb`.
+deliberately **not** ported: the multi-config sweep runner (`run_experiment`), Procrustes
+similarity tracking, `error_vs_neighborhood`, and the weighted SMACOF / spectral-layout MDS
+baselines in `Test.py`. (`mds_init` *was* ported, as `NBPConfig.warm_start` — see above.) The
+legacy results dict reported `var(D_noisy - D_clean)` under the key `"CRLB"` — a ranging variance
+in m^2, plotted against a positioning RMSE in m. It is not a bound; use `metrics.crlb`.

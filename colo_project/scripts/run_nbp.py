@@ -22,6 +22,11 @@ def main() -> None:
     parser.add_argument("--n-hop", type=int, default=2)
     parser.add_argument("--meters", type=float, default=100.0)
     parser.add_argument("--no-priors", action="store_true")
+    parser.add_argument("--warm-start", action="store_true",
+                        help="seed particles from the MDS layout instead of "
+                             "the anchor boxes / whole field")
+    parser.add_argument("--warm-halfwidth", type=float, default=None,
+                        help="seed box half-width in m (default: radius/2)")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--show", action="store_true")
     args = parser.parse_args()
@@ -64,6 +69,10 @@ def main() -> None:
 
     mds = ClassicMDS(dim=sc.dim)
     x_hat, _, rigid = mds.run_mds(sc.X_true, sc.D, sc.full_D, sc.num_anchors)
+    # Captured before the fallback below: `rigid` is about to be replaced by a
+    # *truth-aligned* layout for scoring, and feeding that to the warm start
+    # would hand the estimator the frame it is supposed to recover.
+    mds_seed = x_hat if rigid is None else rigid
     if rigid is None:
         # run_mds has no anchors to register against and says so by returning
         # None; align on the whole point set instead. MDS keeps no absolute
@@ -76,7 +85,9 @@ def main() -> None:
         n_particles=args.n_particles, n_iter=args.n_iter,
         n_batches=args.n_batches, radius=args.radius, n_hop=args.n_hop,
         meters=args.meters, use_priors=not args.no_priors, seed=args.seed,
+        warm_start=args.warm_start, warm_halfwidth=args.warm_halfwidth,
     )
+    nbp = NBP(sc, cfg, init_positions=mds_seed)
 
     print(f"scenario        : {sc.name} (seed {sc.seed})")
     print(f"nodes / anchors : {sc.n_nodes} / {sc.num_anchors}")
@@ -88,9 +99,16 @@ def main() -> None:
     print(f"CRLB PEB median : {np.median(peb):.3f}")
     print(f"MDS RMSE        : {mds_rmse:.3f}"
           f"{'  (Procrustes-aligned)' if free else ''}")
+    if cfg.warm_start:
+        init_desc = f"MDS warm start, +/-{nbp.warm_halfwidth:.1f} m box"
+    elif cfg.use_priors and t:
+        init_desc = "anchor bboxes"
+    else:
+        init_desc = "whole field (uniform)"
+    print(f"init            : {init_desc}")
     print("NBP:")
 
-    res = NBP(sc, cfg).run()
+    res = nbp.run()
 
     # Anchor-free, the raw RMSE is mostly the arbitrary frame -- NBP holds one
     # only through its uniform-over-the-field initial prior, and nothing pins
@@ -125,6 +143,7 @@ def main() -> None:
         "git_sha": io.git_sha(),
         "config": res.config,
         "anchor_free": free,
+        "warm_halfwidth_used": nbp.warm_halfwidth if cfg.warm_start else None,
         "crlb_rms": crlb_rms,
         "crlb_peb_med": float(np.median(peb)),
         "mds_rmse": mds_rmse,

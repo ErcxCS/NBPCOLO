@@ -54,6 +54,13 @@ class NBPConfig:
     n_hop: int = 2
     meters: float = 100.0
     use_priors: bool = True
+    # Warm start: seed the particles from a global layout (MDS by default)
+    # instead of from the anchor boxes or the whole field. Off by default, so
+    # a run that does not ask for it is byte-for-byte the old cold run.
+    # `warm_halfwidth` is the seed box half-width in metres; None means
+    # `radius / 2`, the scale over which a range measurement is informative.
+    warm_start: bool = False
+    warm_halfwidth: float | None = None
     # Ablation: drop the negative (push) messages while still using the n-hop
     # matrix for range smoothing, so the two effects of n_hop can be separated.
     use_negative: bool = True
@@ -92,9 +99,15 @@ class NBPResult:
 
 
 class NBP:
-    def __init__(self, scenario: Scenario, cfg: NBPConfig):
+    def __init__(self, scenario: Scenario, cfg: NBPConfig, *,
+                 init_positions: np.ndarray = None):
         self.sc = scenario
         self.cfg = cfg
+        # Seed layout for `cfg.warm_start`, `(N, d)`. Optional purely to save
+        # work: `run_nbp` already computes MDS for the baseline, and on
+        # amsterdam that is 22 hops of an O(N^3) min-plus DP. Left None, the
+        # warm start computes its own.
+        self.init_positions = init_positions
 
         # Three matrices with three distinct jobs, kept separate on purpose:
         #
@@ -124,20 +137,65 @@ class NBP:
         half = cfg.meters / 2.0
         self.limits = np.array([-half, half] * self.d, dtype=float)
         self.n_empty_bbox = 0
+        self.warm_halfwidth = (
+            cfg.radius / 2.0 if cfg.warm_halfwidth is None
+            else cfg.warm_halfwidth
+        )
 
     # -- setup ------------------------------------------------------------
 
+    def _warm_bboxes(self) -> np.ndarray:
+        """Prior boxes centred on a seed layout rather than on the anchors.
+
+        Legacy `COLO.generate_particles` did this by making every particle of a
+        node an exact copy of its MDS position. That is two bugs: the belief
+        starts with zero spread, so the range annuli have nothing to select
+        between and the first KDE is degenerate; and the assignment replaced
+        the whole array, overwriting the anchor rows and throwing away the only
+        positions that were known exactly.
+
+        Here the seed merely *centres* a box of half-width `warm_halfwidth`,
+        clipped to the field, and `init_particles` still restores anchors to
+        their own positions. The seed is clipped into the field first so the
+        box cannot come out inverted.
+        """
+        X0 = self.init_positions
+        if X0 is None:
+            from colo_project.mds.classic_mds import ClassicMDS
+            x_hat, _, rigid = ClassicMDS(dim=self.d).run_mds(
+                self.sc.X_true, self.sc.D, self.sc.full_D, self.n_anchors
+            )
+            # Registered against the anchors when there are any; otherwise the
+            # raw embedding, which double-centring already leaves at the
+            # origin -- the same place `self.limits` is centred. Never a
+            # truth-aligned layout: that would leak the frame the estimator is
+            # supposed to be recovering.
+            X0 = x_hat if rigid is None else rigid
+        lo_lim, hi_lim = self.limits[0::2], self.limits[1::2]
+        X0 = np.clip(np.asarray(X0, dtype=float), lo_lim, hi_lim)
+
+        bboxes = np.empty((self.N, 2 * self.d))
+        bboxes[:, 0::2] = np.maximum(X0 - self.warm_halfwidth, lo_lim)
+        bboxes[:, 1::2] = np.minimum(X0 + self.warm_halfwidth, hi_lim)
+        return bboxes
+
     def _init_state(self, rng) -> NBPState:
-        # Kept on self only so the priors can be plotted afterwards; the value
-        # handed to init_particles is unchanged.
-        # With no anchors there is nothing to intersect, so the prior *is*
-        # the deployment area; asking create_bbox for it would reduce over a
-        # zero-length anchor axis.
-        if self.cfg.use_priors and self.n_anchors > 0:
+        # `self.bboxes` is kept only so the priors can be plotted afterwards;
+        # the value handed to init_particles is unchanged.
+        if self.cfg.warm_start:
+            # Replaces the anchor boxes rather than intersecting with them:
+            # with anchors present the MDS layout was registered *using* those
+            # anchors, so their constraint is already folded in, and keeping
+            # the two arms disjoint is what makes warm-vs-cold a clean A/B.
+            self.bboxes = self._warm_bboxes()
+        elif self.cfg.use_priors and self.n_anchors > 0:
             self.bboxes, self.n_empty_bbox = create_bbox(
                 self.sc.D, self.sc.anchors, self.limits
             )
         else:
+            # No priors asked for, or no anchors to intersect -- the prior is
+            # then the deployment area itself. `create_bbox` would reduce over
+            # a zero-length anchor axis.
             self.bboxes = full_area_bbox(self.N, self.limits)
 
         particles, weights = init_particles(
