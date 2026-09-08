@@ -27,9 +27,21 @@ python -m colo_project.scripts.run_nbp --scenario dense --radius 30
 python -m colo_project.dataset.generate_dataset --scenarios-dir colo_project/dataset/scenarios --out-dir <dir>
 ```
 
-Runs are **headless by default** (`matplotlib.use("Agg")`); pass `--show` to open figures. Results
-land in `results/<scenario>_seed<n>/` as `metrics*.json`, `arrays*.npz` and PNGs. There are no
-tests and no linter config; line lengths follow flake8 defaults (79).
+Runs are **headless by default** (`matplotlib.use("Agg")`); pass `--show` to open figures. There are
+no tests and no linter config; line lengths follow flake8 defaults (79).
+
+**Every run is kept.** `io.result_dir` allocates a fresh `run_NNNN/` per invocation and never reuses
+one, so a rerun of the same scenario/config/seed cannot overwrite an earlier result:
+
+```
+results/<scenario>_seed<n>/
+    network.png  model_detection.png  model_rss.png   <- depend only on the scenario
+    run_0001/    metrics*.json  arrays*.npz  figures/*.png
+    run_0002/    ...
+```
+
+The index is `max(existing) + 1`, not a count, so deleting a run does not hand its number out again.
+Figures go in `figures/`, never beside the json/npz.
 
 ## Data pipeline
 
@@ -85,7 +97,10 @@ a CRLB of ~0.93).
   known anchor coordinates and inverts exactly; it returns a `(2*N_targets, 2*N_targets)` covariance
   and requires `num_anchors > 0`. Do not reintroduce Tikhonov regularization to invert the full FIM
   — that makes the "bound" a function of `eps` rather than of geometry, and MDS could beat it.
-- Plot helpers **return a figure and never call `plt.show()`**; the caller saves or shows.
+- Plot helpers **return a figure and never call `plt.show()`**; the caller saves or shows. They also
+  all accept `ax=None` so they compose into a grid, and they take **absolute** node indices. Nodes of
+  interest are picked from the data (worst error, widest prior) — the legacy prototype hardcoded node
+  4 or 5 plus a matching zoom window, which is why none of its figures generalized.
 
 ## Module map (`colo_project/`)
 
@@ -93,8 +108,13 @@ a CRLB of ~0.93).
 - `dataset/` — `generate_dataset.py` (JSON → `.npz`), `data_loader.py` (`Scenario`, `load_or_generate`).
 - `utils/graph_utils.py` — the forward measurement model and n-hop graph construction.
   `n_hop_distance` is a dense min-plus DP, O(N^3) per hop, and dominates runtime for large N.
-- `utils/metrics.py` — `euclidean_metrics`, `range_sigma`, anchored `crlb`/`jacobian`/`per_node_peb`.
-- `utils/io.py` — `result_dir`, `save_json`/`save_arrays`, `git_sha` (resolved against this repo, not cwd).
+- `utils/metrics.py` — `euclidean_metrics`, `per_node_error`, `range_sigma`, anchored
+  `crlb`/`jacobian`/`per_node_peb`.
+- `utils/io.py` — `result_dir` (allocates `run_NNNN/`), `save_json`/`save_arrays`/`save_fig`,
+  `git_sha` (resolved against this repo, not cwd).
+- `utils/visualizations.py` — `plot_network`, `plot_results`, `plot_convergence`, `plot_error_cdf`,
+  `plot_error_vs_degree`, `plot_particles`, `plot_messages`, `plot_detection_model`,
+  `plot_rss_model`, and `scenario_figures` (the scenario-only set, as `{stem: fig}`).
 - `mds/classic_mds.py` — `run_mds` returns `(x_hat, affine, rigid)`; rigid (Procrustes) is
   substantially better than affine on these scenarios.
 - `nbp/` — `bbox.py`, `potentials.py` (both pure, no RNG), `particles.py` (all RNG), `core.py`
@@ -114,6 +134,13 @@ particles of u.
 `self.D` is the **n-hop** distance matrix and `self.C` is the **one-hop** adjacency. That split is
 the core of the algorithm: one-hop neighbours send positive messages, while nodes reachable within
 n hops that were *not* heard send negative information (`1 - E[detect]`). Do not collapse the two.
+
+`NBPResult.extras` carries what the run would otherwise throw away, for the plots: `particles_hist`
+`(n_iter, N, P, d)`, `weights_hist`, `spread_hist` `(n_iter, N_t)`, `bboxes`, and the final
+iteration's `proposals` dict of KDEs (RAM only — a `gaussian_kde` does not go into an `.npz`, so the
+message figure is its record). This is recording, not computing: nothing in it draws from `rng` and
+nothing is inserted between two RNG consumers, so the trace stays bitwise identical. ~3 MB at N=100,
+P=125, n_iter=10, linear in every knob — gate it behind a config flag before N reaches the thousands.
 
 Known behaviour, not a bug: RMSE bottoms out around iteration 5 and drifts up slightly afterwards
 (particle depletion / overconfidence). Runtime is ~25-60s for N=100, P=125, 10 iterations; the hot

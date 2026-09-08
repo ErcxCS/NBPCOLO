@@ -8,10 +8,34 @@ import numpy as np
 
 
 def result_dir(root: Path, scenario_name: str, seed: int) -> Path:
-    """`<root>/<scenario>_seed<seed>/`, created if missing."""
-    out = Path(root) / f"{scenario_name}_seed{seed}"
-    out.mkdir(parents=True, exist_ok=True)
-    return out
+    """Allocate a fresh `<root>/<scenario>_seed<seed>/run_NNNN/`.
+
+    Every invocation gets its own directory, so a rerun can no longer clobber
+    the one before it -- which it silently did when this returned the scenario
+    directory itself. That also settles the case of two runs whose only
+    difference is an algorithm knob: `seed` here is the *scenario* seed, so
+    `run_nbp --seed 0` and `--seed 7` used to land on the same files.
+
+    The index is one past the highest existing `run_NNNN`, not a count, so
+    deleting a run does not hand its number out again. `figures/` is created
+    eagerly; the scenario directory is `.parent`, and holds the figures that
+    depend only on the scenario.
+    """
+    parent = Path(root) / f"{scenario_name}_seed{seed}"
+    parent.mkdir(parents=True, exist_ok=True)
+    used = [int(p.name[4:]) for p in parent.glob("run_*")
+            if p.is_dir() and p.name[4:].isdigit()]
+    nxt = max(used, default=0) + 1
+    for i in range(nxt, nxt + 100):
+        out = parent / f"run_{i:04d}"
+        try:
+            # No exist_ok: mkdir failing *is* how a lost race is detected.
+            out.mkdir()
+        except FileExistsError:
+            continue
+        (out / "figures").mkdir()
+        return out
+    raise RuntimeError(f"no free run directory under {parent}")
 
 
 def _jsonable(obj):
@@ -39,6 +63,17 @@ def load_json(path: Path) -> dict:
 def save_arrays(path: Path, **arrays) -> Path:
     path = Path(path)
     np.savez_compressed(path, **arrays)
+    return path
+
+
+def save_fig(fig, path: Path, dpi: int = 120) -> Path:
+    """Write `fig` to `path`.
+
+    Deliberately does not close: `--show` needs the figure alive afterwards,
+    and the scripts already close everything once at the end.
+    """
+    path = Path(path)
+    fig.savefig(path, dpi=dpi)
     return path
 
 

@@ -3,6 +3,14 @@ import numpy as np
 from colo_project.constants import ALPHA, D0
 
 
+def per_node_error(targets: np.ndarray, predicts: np.ndarray) -> np.ndarray:
+    """Per-node Euclidean error, `(N_t,)`.
+
+    The aggregates below hide which nodes are bad; the plots need the vector.
+    """
+    return np.sqrt(np.sum((targets - predicts)**2, axis=1))
+
+
 def euclidean_metrics(targets: np.ndarray, predicts: np.ndarray):
     """
     Compute a handful of Euclidean‐error metrics:
@@ -10,7 +18,7 @@ def euclidean_metrics(targets: np.ndarray, predicts: np.ndarray):
       - MAE  (mean absolute error)
       - MedAE (median absolute error)
     """
-    errors = np.sqrt(np.sum((targets - predicts)**2, axis=1))
+    errors = per_node_error(targets, predicts)
     rmse = np.sqrt(np.mean(errors**2))
     mae = np.mean(errors)
     med = np.median(errors)

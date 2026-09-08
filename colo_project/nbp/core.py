@@ -83,6 +83,11 @@ class NBPResult:
     n_degenerate: int = 0
     n_empty_bbox: int = 0
     runtime_s: float = 0.0
+    # Diagnostics the plots need, recorded rather than recomputed:
+    #   particles_hist (n_iter, N, P, d), weights_hist (n_iter, N, P),
+    #   spread_hist (n_iter, N_t), bboxes (N, 2d), proposals {(r,u): kde}.
+    # ~3 MB at N=100, P=125, n_iter=10, linear in every knob; at N=1000,
+    # P=500 it is ~400 MB and wants a config gate.
     extras: dict = field(default_factory=dict)
 
 
@@ -123,15 +128,17 @@ class NBP:
     # -- setup ------------------------------------------------------------
 
     def _init_state(self, rng) -> NBPState:
+        # Kept on self only so the priors can be plotted afterwards; the value
+        # handed to init_particles is unchanged.
         if self.cfg.use_priors:
-            bboxes, self.n_empty_bbox = create_bbox(
+            self.bboxes, self.n_empty_bbox = create_bbox(
                 self.sc.D, self.sc.anchors, self.limits
             )
         else:
-            bboxes = full_area_bbox(self.N, self.limits)
+            self.bboxes = full_area_bbox(self.N, self.limits)
 
         particles, weights = init_particles(
-            bboxes, self.sc.anchors, self.cfg.n_particles, rng=rng
+            self.bboxes, self.sc.anchors, self.cfg.n_particles, rng=rng
         )
         incoming = np.ones((self.N, self.N, self.cfg.n_particles))
         return NBPState(particles, weights, incoming)
@@ -281,6 +288,11 @@ class NBP:
         state = self._init_state(np.random.default_rng([cfg.seed, STREAM_NBP]))
 
         hist, rmse, mae, med, spread = [], [], [], [], []
+        # Diagnostics for the plots. Recording only -- nothing below draws
+        # from `rng`, and nothing is inserted between two RNG consumers, so
+        # the trace stays bitwise identical at a fixed seed.
+        particles_hist, weights_hist, spread_hist = [], [], []
+        proposals = {}
         n_degenerate = 0
         t = self.n_anchors
 
@@ -301,9 +313,11 @@ class NBP:
             rmse.append(r_)
             mae.append(a_)
             med.append(m_)
-            spread.append(_belief_spread(
-                state.particles[t:], state.weights[t:], est
-            ).mean())
+            sp = _belief_spread(state.particles[t:], state.weights[t:], est)
+            spread_hist.append(sp)
+            spread.append(sp.mean())
+            particles_hist.append(state.particles.copy())
+            weights_hist.append(state.weights.copy())
 
             if verbose:
                 print(f"  iter {it + 1:>2}/{cfg.n_iter}  "
@@ -324,6 +338,15 @@ class NBP:
             n_degenerate=n_degenerate,
             n_empty_bbox=self.n_empty_bbox,
             runtime_s=time.perf_counter() - t0,
+            extras={
+                "particles_hist": np.array(particles_hist),
+                "weights_hist": np.array(weights_hist),
+                "spread_hist": np.array(spread_hist),
+                "bboxes": self.bboxes,
+                # Last iteration only, and RAM only: a gaussian_kde does not
+                # go into an .npz, so the message figure is its record.
+                "proposals": proposals,
+            },
         )
 
 

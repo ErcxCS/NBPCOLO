@@ -110,7 +110,7 @@ def main() -> None:
         ax.legend()
         ax.grid(alpha=0.3)
         fig.tight_layout()
-        fig.savefig(out / f"ablation_{name}.png", dpi=120)
+        io.save_fig(fig, out / "figures" / f"ablation_{name}.png")
         plt.close(fig)
 
     io.save_json(out / "ablation.json", report)

@@ -33,12 +33,16 @@ def main() -> None:
 
     from colo_project.dataset.data_loader import load_or_generate
     from colo_project.mds.classic_mds import ClassicMDS
+    from colo_project.nbp.bbox import bbox_area
     from colo_project.nbp.core import NBP, NBPConfig
     from colo_project.utils import io
     from colo_project.utils.metrics import (
-        crlb, euclidean_metrics, per_node_peb, summarize_crlb,
+        crlb, euclidean_metrics, per_node_error, per_node_peb, summarize_crlb,
     )
-    from colo_project.utils.visualizations import plot_results
+    from colo_project.utils.visualizations import (
+        plot_convergence, plot_error_cdf, plot_error_vs_degree, plot_messages,
+        plot_particles, plot_results, scenario_figures,
+    )
 
     sc = load_or_generate(args.scenario, args.scenarios_dir)
     t = sc.num_anchors
@@ -89,30 +93,81 @@ def main() -> None:
         "n_empty_bbox": res.n_empty_bbox,
         "runtime_s": res.runtime_s,
     })
+    ex = res.extras
     io.save_arrays(
         out / "arrays_nbp.npz",
         estimates=res.estimates, estimates_hist=res.estimates_hist,
         particles=res.particles, weights=res.weights, peb=peb,
+        particles_hist=ex["particles_hist"], weights_hist=ex["weights_hist"],
+        spread_hist=ex["spread_hist"], bboxes=ex["bboxes"],
     )
 
-    it = range(1, len(res.rmse) + 1)
-    fig, ax = plt.subplots(figsize=(7, 4.5))
-    ax.plot(it, res.rmse, "o-", label="NBP RMSE")
-    ax.plot(it, res.med, "s--", label="NBP median", alpha=0.7)
-    ax.axhline(mds_rmse, color="tab:orange", ls=":", label="MDS RMSE")
-    ax.axhline(crlb_rms, color="tab:red", ls="-.", label="CRLB")
-    ax.set_xlabel("iteration")
-    ax.set_ylabel("error (m)")
-    ax.set_title(f"{sc.name} seed {sc.seed}")
-    ax.legend()
-    ax.grid(alpha=0.3)
-    fig.tight_layout()
-    fig.savefig(out / "convergence.png", dpi=120)
+    # Scenario-level, so beside the run dirs rather than inside one.
+    for stem, fig in scenario_figures(sc).items():
+        io.save_fig(fig, out.parent / f"{stem}.png")
 
-    fig2 = plot_results(sc.X_true, np.vstack([sc.anchors, res.estimates]),
-                        sc.num_anchors, show_lines=True, show_anchors=True,
-                        title=f"NBP — RMSE {res.rmse[-1]:.2f}")
-    fig2.savefig(out / "layout_nbp.png", dpi=120)
+    figs = out / "figures"
+    estimates = np.vstack([sc.anchors, res.estimates])
+    err_nbp = per_node_error(sc.targets, res.estimates)
+    err_mds = per_node_error(sc.targets, rigid[t:])
+    degrees = sc.B.sum(axis=1)[t:]
+    # Anchors have zero spread; padding keeps plot_results free of any
+    # offset-by-num_anchors indexing.
+    radii = np.concatenate([np.zeros(t), ex["spread_hist"][-1]])
+
+    fig, axes = plt.subplots(1, 2, figsize=(13, 4.5))
+    plot_convergence(
+        {"RMSE": res.rmse, "MAE": res.mae, "median": res.med},
+        baselines={"MDS RMSE": mds_rmse, "CRLB": crlb_rms}, ax=axes[0],
+        title=f"{sc.name} seed {sc.seed}")
+    plot_convergence({"belief spread": res.spread}, ax=axes[1],
+                     ylabel="spread (m)", title="reported uncertainty")
+    fig.tight_layout()
+    io.save_fig(fig, figs / "convergence.png")
+
+    io.save_fig(
+        plot_results(sc.X_true, estimates, sc.num_anchors, show_lines=True,
+                     show_anchors=True, radii=radii,
+                     title=f"NBP — RMSE {res.rmse[-1]:.2f}"),
+        figs / "layout_nbp.png")
+
+    fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+    plot_error_cdf({"NBP": err_nbp, "MDS rigid": err_mds}, bound=peb,
+                   ax=axes[0], title="per-node error")
+    plot_error_vs_degree({"NBP": err_nbp, "MDS rigid": err_mds}, degrees,
+                         ax=axes[1], title="error vs connectivity")
+    fig.tight_layout()
+    io.save_fig(fig, figs / "compare_nbp_mds_crlb.png")
+
+    # Chosen from the data, never hardcoded: the target NBP did worst on.
+    worst = t + int(err_nbp.argmax())
+    picks = np.unique(np.linspace(0, cfg.n_iter - 1, 6).astype(int))
+    fig, axes = plt.subplots(2, 3, figsize=(15, 10), sharex=True, sharey=True)
+    for k, i in enumerate(picks):
+        plot_particles(ex["particles_hist"][i], ex["weights_hist"][i],
+                       sc.X_true, sc.num_anchors, [worst], ax=axes.flat[k],
+                       title=f"iteration {i + 1}")
+    for extra in axes.flat[len(picks):]:
+        extra.set_visible(False)
+    fig.suptitle(f"belief of node {worst} (worst error, "
+                 f"{err_nbp.max():.2f} m)")
+    fig.tight_layout()
+    io.save_fig(fig, figs / "particles_iter.png")
+
+    widest = t + np.argsort(bbox_area(ex["bboxes"])[t:])[-4:]
+    io.save_fig(
+        plot_particles(ex["particles_hist"][0], ex["weights_hist"][0],
+                       sc.X_true, sc.num_anchors, widest.tolist(),
+                       bboxes=ex["bboxes"],
+                       title="widest anchor-derived priors, iteration 1"),
+        figs / "priors.png")
+
+    io.save_fig(
+        plot_messages(ex["proposals"], worst, res.particles, res.weights,
+                      sc.X_true, sc.num_anchors, sc.D,
+                      title=f"messages into node {worst}, "
+                            f"iteration {cfg.n_iter}"),
+        figs / "messages_node.png")
 
     if args.show:
         plt.show()

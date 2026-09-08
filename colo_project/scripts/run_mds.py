@@ -30,9 +30,11 @@ def main() -> None:
     from colo_project.mds.classic_mds import ClassicMDS
     from colo_project.utils import io
     from colo_project.utils.metrics import (
-        crlb, euclidean_metrics, per_node_peb, summarize_crlb,
+        crlb, euclidean_metrics, per_node_error, per_node_peb, summarize_crlb,
     )
-    from colo_project.utils.visualizations import plot_results
+    from colo_project.utils.visualizations import (
+        plot_error_cdf, plot_error_vs_degree, plot_results, scenario_figures,
+    )
 
     sc = load_or_generate(args.scenario, args.scenarios_dir)
 
@@ -85,13 +87,37 @@ def main() -> None:
     io.save_arrays(out / "arrays_mds.npz",
                    x_hat=x_hat, affine=affine, rigid=rigid, peb=peb)
 
-    fig = plot_results(sc.X_true, rigid, sc.num_anchors,
-                       show_lines=True, show_anchors=True,
-                       title=f"MDS (rigid) — RMSE {rmse_rigid:.2f}")
-    fig.savefig(out / "layout_mds.png", dpi=120)
+    # Scenario-level, so beside the run dirs rather than inside one.
+    for stem, fig in scenario_figures(sc).items():
+        io.save_fig(fig, out.parent / f"{stem}.png")
+
+    figs = out / "figures"
+    err_rigid = per_node_error(sc.targets, rigid[t:])
+    err_affine = per_node_error(sc.targets, affine[t:])
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 6))
+    plot_results(sc.X_true, affine, sc.num_anchors, show_lines=True,
+                 show_anchors=True, ax=axes[0],
+                 title=f"affine — RMSE {rmse_affine:.2f}")
+    plot_results(sc.X_true, rigid, sc.num_anchors, show_lines=True,
+                 show_anchors=True, ax=axes[1],
+                 title=f"rigid — RMSE {rmse_rigid:.2f}")
+    fig.tight_layout()
+    io.save_fig(fig, figs / "layout_mds.png")
+
+    io.save_fig(
+        plot_error_cdf({"MDS rigid": err_rigid, "MDS affine": err_affine},
+                       bound=peb, title=f"{sc.name} — per-node error"),
+        figs / "error_cdf.png")
+    io.save_fig(
+        plot_error_vs_degree({"MDS rigid": err_rigid},
+                             sc.B.sum(axis=1)[t:],
+                             title=f"{sc.name} — error vs connectivity"),
+        figs / "error_vs_degree.png")
+
     if args.show:
         plt.show()
-    plt.close(fig)
+    plt.close("all")
 
     print(f"wrote           : {out}")
 
