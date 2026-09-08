@@ -1,0 +1,12 @@
+{
+  "positions": "../Image_location_datasets/Paris_ArcDeTriomphe_Orbit_Clean_transforms.json",
+  "num_anchors": 0,
+  "d_dim": 2,
+  "radius": 50,
+  "noise": 1.0,
+  "seed": 31,
+  "placement": false,
+  "heterogeneity": false,
+  "power_level": -1,
+  "symetric": true
+}

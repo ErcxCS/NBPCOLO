@@ -43,9 +43,14 @@ def farthest_point_anchors(X, k):
     nearly unresolved; spreading them over the hull is what keeps the FIM well
     conditioned. Deterministic -- it starts from the point farthest from the
     centroid -- so no `rng` is needed or taken.
+
+    `k = 0` is the anchor-free case and returns no indices, which leaves the
+    capture order untouched: there is nothing to move to the front.
     """
-    if not 0 < k <= len(X):
-        raise ValueError(f"need 0 < k <= {len(X)}, got {k}")
+    if not 0 <= k <= len(X):
+        raise ValueError(f"need 0 <= k <= {len(X)}, got {k}")
+    if k == 0:
+        return np.empty(0, dtype=int)
     centre = X.mean(axis=0)
     chosen = [int(np.argmax(np.linalg.norm(X - centre, axis=1)))]
     gap = np.linalg.norm(X - X[chosen[0]], axis=1)

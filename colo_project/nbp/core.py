@@ -130,7 +130,10 @@ class NBP:
     def _init_state(self, rng) -> NBPState:
         # Kept on self only so the priors can be plotted afterwards; the value
         # handed to init_particles is unchanged.
-        if self.cfg.use_priors:
+        # With no anchors there is nothing to intersect, so the prior *is*
+        # the deployment area; asking create_bbox for it would reduce over a
+        # zero-length anchor axis.
+        if self.cfg.use_priors and self.n_anchors > 0:
             self.bboxes, self.n_empty_bbox = create_bbox(
                 self.sc.D, self.sc.anchors, self.limits
             )

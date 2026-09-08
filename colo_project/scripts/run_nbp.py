@@ -37,7 +37,8 @@ def main() -> None:
     from colo_project.nbp.core import NBP, NBPConfig
     from colo_project.utils import io
     from colo_project.utils.metrics import (
-        crlb, euclidean_metrics, per_node_error, per_node_peb, summarize_crlb,
+        align_rigid, crlb, crlb_anchor_free, euclidean_metrics, per_node_error,
+        per_node_peb, rigid_transform, summarize_crlb,
     )
     from colo_project.utils.visualizations import (
         plot_convergence, plot_error_cdf, plot_error_vs_degree, plot_messages,
@@ -46,14 +47,29 @@ def main() -> None:
 
     sc = load_or_generate(args.scenario, args.scenarios_dir)
     t = sc.num_anchors
+    # With no anchors there is no absolute frame: the estimate is defined only
+    # up to translation, rotation and reflection. Both the bound and the
+    # scoring then have to be gauge-invariant, so the whole run branches here
+    # and nowhere else.
+    free = sc.num_anchors == 0
 
-    cov = crlb(sc.B, sc.X_true, sc.num_anchors,
-               alpha=sc.alpha, d0=sc.d0, sigma_db=sc.noise)
+    if free:
+        cov = crlb_anchor_free(sc.B, sc.X_true,
+                               alpha=sc.alpha, d0=sc.d0, sigma_db=sc.noise)
+    else:
+        cov = crlb(sc.B, sc.X_true, sc.num_anchors,
+                   alpha=sc.alpha, d0=sc.d0, sigma_db=sc.noise)
     crlb_rms = summarize_crlb(cov)["CRLB rms threshold"]
     peb = per_node_peb(cov)
 
     mds = ClassicMDS(dim=sc.dim)
-    _, _, rigid = mds.run_mds(sc.X_true, sc.D, sc.full_D, sc.num_anchors)
+    x_hat, _, rigid = mds.run_mds(sc.X_true, sc.D, sc.full_D, sc.num_anchors)
+    if rigid is None:
+        # run_mds has no anchors to register against and says so by returning
+        # None; align on the whole point set instead. MDS keeps no absolute
+        # frame at all -- double-centering puts its embedding at the origin --
+        # so there is no raw score to report for it, only this one.
+        rigid = align_rigid(x_hat, sc.X_true)
     mds_rmse = euclidean_metrics(sc.targets, rigid[t:])[0]
 
     cfg = NBPConfig(
@@ -65,14 +81,39 @@ def main() -> None:
     print(f"scenario        : {sc.name} (seed {sc.seed})")
     print(f"nodes / anchors : {sc.n_nodes} / {sc.num_anchors}")
     print(f"mean degree     : {sc.mean_degree:.2f}")
-    print(f"CRLB rms        : {crlb_rms:.3f}")
-    print(f"MDS RMSE        : {mds_rmse:.3f}")
+    gauge = "  (anchor-free, gauge-projected)" if free else ""
+    print(f"CRLB rms        : {crlb_rms:.3f}{gauge}")
+    # The rms is an rms over per-node PEBs and one ill-conditioned node runs
+    # away with it; the median is what these datasets should be judged on.
+    print(f"CRLB PEB median : {np.median(peb):.3f}")
+    print(f"MDS RMSE        : {mds_rmse:.3f}"
+          f"{'  (Procrustes-aligned)' if free else ''}")
     print("NBP:")
 
     res = NBP(sc, cfg).run()
 
+    # Anchor-free, the raw RMSE is mostly the arbitrary frame -- NBP holds one
+    # only through its uniform-over-the-field initial prior, and nothing pins
+    # the rotation at all. Score the shape as well, per iteration, so the two
+    # can be told apart.
+    rmse_aligned = med_aligned = aligned_hist = None
+    if free:
+        aligned_hist = np.array(
+            [align_rigid(e, sc.targets) for e in res.estimates_hist]
+        )
+        scores = np.array(
+            [euclidean_metrics(sc.targets, e) for e in aligned_hist]
+        )
+        rmse_aligned, med_aligned = scores[:, 0], scores[:, 2]
+
     print(f"NBP RMSE final  : {res.rmse[-1]:.3f}  "
-          f"(best {res.rmse.min():.3f} at iter {res.rmse.argmin() + 1})")
+          f"(best {res.rmse.min():.3f} at iter {res.rmse.argmin() + 1})"
+          f"{'  [raw, frame included]' if free else ''}")
+    if free:
+        print(f"NBP aligned     : {rmse_aligned[-1]:.3f}  "
+              f"(best {rmse_aligned.min():.3f} at iter "
+              f"{rmse_aligned.argmin() + 1}), median "
+              f"{med_aligned[-1]:.3f}")
     print(f"degenerate/empty: {res.n_degenerate} / {res.n_empty_bbox}")
     print(f"runtime         : {res.runtime_s:.1f}s")
 
@@ -83,9 +124,13 @@ def main() -> None:
         "algorithm": "nbp",
         "git_sha": io.git_sha(),
         "config": res.config,
+        "anchor_free": free,
         "crlb_rms": crlb_rms,
+        "crlb_peb_med": float(np.median(peb)),
         "mds_rmse": mds_rmse,
         "rmse": res.rmse,
+        "rmse_aligned": rmse_aligned,
+        "med_aligned": med_aligned,
         "mae": res.mae,
         "med": res.med,
         "spread": res.spread,
@@ -107,19 +152,26 @@ def main() -> None:
         io.save_fig(fig, out.parent / f"{stem}.png")
 
     figs = out / "figures"
-    estimates = np.vstack([sc.anchors, res.estimates])
-    err_nbp = per_node_error(sc.targets, res.estimates)
+    # Score, and draw the layout, in the frame the truth lives in.
+    est_scored = aligned_hist[-1] if free else res.estimates
+    estimates = np.vstack([sc.anchors, est_scored])
+    err_nbp = per_node_error(sc.targets, est_scored)
     err_mds = per_node_error(sc.targets, rigid[t:])
     degrees = sc.B.sum(axis=1)[t:]
     # Anchors have zero spread; padding keeps plot_results free of any
     # offset-by-num_anchors indexing.
     radii = np.concatenate([np.zeros(t), ex["spread_hist"][-1]])
 
+    curves = {"RMSE": res.rmse, "MAE": res.mae, "median": res.med}
+    if free:
+        curves = {"RMSE raw": res.rmse, "RMSE aligned": rmse_aligned,
+                  "median aligned": med_aligned}
     fig, axes = plt.subplots(1, 2, figsize=(13, 4.5))
     plot_convergence(
-        {"RMSE": res.rmse, "MAE": res.mae, "median": res.med},
+        curves,
         baselines={"MDS RMSE": mds_rmse, "CRLB": crlb_rms}, ax=axes[0],
-        title=f"{sc.name} seed {sc.seed}")
+        title=f"{sc.name} seed {sc.seed}"
+              f"{' — no anchors' if free else ''}")
     plot_convergence({"belief spread": res.spread}, ax=axes[1],
                      ylabel="spread (m)", title="reported uncertainty")
     fig.tight_layout()
@@ -127,9 +179,20 @@ def main() -> None:
 
     io.save_fig(
         plot_results(sc.X_true, estimates, sc.num_anchors, show_lines=True,
-                     show_anchors=True, radii=radii,
-                     title=f"NBP — RMSE {res.rmse[-1]:.2f}"),
+                     show_anchors=not free, radii=radii,
+                     title=f"NBP — RMSE "
+                           f"{(rmse_aligned if free else res.rmse)[-1]:.2f}"
+                           f"{' (Procrustes-aligned)' if free else ''}"),
         figs / "layout_nbp.png")
+    if free:
+        # The same estimate before alignment: the gap between the two figures
+        # is the gauge, and is not an estimation error.
+        io.save_fig(
+            plot_results(sc.X_true, np.vstack([sc.anchors, res.estimates]),
+                         0, show_lines=True, radii=radii,
+                         title=f"NBP — RMSE {res.rmse[-1]:.2f} "
+                               f"(raw, unaligned frame)"),
+            figs / "layout_nbp_raw.png")
 
     fig, axes = plt.subplots(1, 2, figsize=(13, 5))
     plot_error_cdf({"NBP": err_nbp, "MDS rigid": err_mds}, bound=peb,
@@ -139,13 +202,22 @@ def main() -> None:
     fig.tight_layout()
     io.save_fig(fig, figs / "compare_nbp_mds_crlb.png")
 
+    # The particle and message diagnostics live in NBP's own frame, so with no
+    # anchors it is ground truth that has to move: A is orthogonal, so the
+    # alignment inverts exactly. Fitted on the last iteration and reused for
+    # all of them, since the frame drifts a little per iteration.
+    X_ref = sc.X_true
+    if free:
+        A, c_hat, c_ref = rigid_transform(res.estimates, sc.targets)
+        X_ref = (sc.X_true - c_ref) @ A.T + c_hat
+
     # Chosen from the data, never hardcoded: the target NBP did worst on.
     worst = t + int(err_nbp.argmax())
     picks = np.unique(np.linspace(0, cfg.n_iter - 1, 6).astype(int))
     fig, axes = plt.subplots(2, 3, figsize=(15, 10), sharex=True, sharey=True)
     for k, i in enumerate(picks):
         plot_particles(ex["particles_hist"][i], ex["weights_hist"][i],
-                       sc.X_true, sc.num_anchors, [worst], ax=axes.flat[k],
+                       X_ref, sc.num_anchors, [worst], ax=axes.flat[k],
                        title=f"iteration {i + 1}")
     for extra in axes.flat[len(picks):]:
         extra.set_visible(False)
@@ -157,14 +229,14 @@ def main() -> None:
     widest = t + np.argsort(bbox_area(ex["bboxes"])[t:])[-4:]
     io.save_fig(
         plot_particles(ex["particles_hist"][0], ex["weights_hist"][0],
-                       sc.X_true, sc.num_anchors, widest.tolist(),
+                       X_ref, sc.num_anchors, widest.tolist(),
                        bboxes=ex["bboxes"],
                        title="widest anchor-derived priors, iteration 1"),
         figs / "priors.png")
 
     io.save_fig(
         plot_messages(ex["proposals"], worst, res.particles, res.weights,
-                      sc.X_true, sc.num_anchors, sc.D,
+                      X_ref, sc.num_anchors, sc.D,
                       title=f"messages into node {worst}, "
                             f"iteration {cfg.n_iter}"),
         figs / "messages_node.png")
