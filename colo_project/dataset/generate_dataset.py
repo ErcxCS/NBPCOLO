@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import numpy as np
 
+from colo_project.dataset.geo_positions import load_geo_positions
 from colo_project.utils.graph_utils import generate_anchors, generate_targets
 from colo_project.utils.graph_utils import get_distance_matrix
 from colo_project.constants import ALPHA, D0, STREAM_DATA
@@ -55,12 +56,23 @@ def generate_scenario(config_path: Path, out_dir: Path) -> Path:
     }
     rng = np.random.default_rng([seed, STREAM_DATA])
 
-    # Generate ground truth positions
-    X_true, area = generate_targets(
-        num_nodes, d_dim,
-        meters,
-        rng=rng
-    )
+    # Ground truth positions: real capture points if the config names a file,
+    # synthetic otherwise. Everything downstream -- path loss, shadowing,
+    # radius thresholding, the .npz contract -- is position-source agnostic.
+    positions = cfg.get("positions", None)
+    if positions is not None:
+        X_true, meters, num_anchors = load_geo_positions(
+            config_path.parent / positions, num_anchors
+        )
+        num_nodes, d_dim = X_true.shape
+        # `placement` would overwrite the real anchors with a hex grid.
+        placement = False
+    else:
+        X_true, area = generate_targets(
+            num_nodes, d_dim,
+            meters,
+            rng=rng
+        )
 
     # Anchor generation logic if needed
     if num_anchors > 0:
@@ -95,7 +107,11 @@ def generate_scenario(config_path: Path, out_dir: Path) -> Path:
         noise=noise,
         alpha=ALPHA,
         d0=D0,
-        seed=seed
+        seed=seed,
+        # Not read by `Scenario` yet, but a real field is not 100 m wide and
+        # `NBPConfig.meters` has to match it, so record what was used.
+        meters=meters,
+        radius=radius
     )
 
     print(f"Saved scenario data to {out_path}")
