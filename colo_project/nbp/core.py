@@ -95,17 +95,23 @@ class NBP:
         #
         #   D_direct  measured one-hop ranges. The evidence a positive message
         #             is built from.
-        #   D_hop     n-hop reachability. Used only as a gate: a nonzero entry
-        #             means the pair takes part in the negative (push) term.
-        #             Its multi-hop *values* are never read as distances.
+        #   D_hop     n-hop reachability. A nonzero entry means the pair takes
+        #             part in the negative (push) term; for pairs that are only
+        #             reachable via a detour its value is a shortest-path sum,
+        #             never a measurement.
         #   C         one-hop adjacency; picks who pulls versus who pushes.
         #
-        # Reading a range out of D_hop would silently substitute a shortest-path
-        # detour for a direct measurement whenever noise makes the detour look
-        # shorter, which it does for ~31% of one-hop pairs on `dense`.
+        # A one-hop pair keeps its own measurement in D_hop: the min-plus DP
+        # would otherwise replace it with a shortest-path detour whenever noise
+        # makes the detour look shorter (~31% of one-hop pairs on `dense`), so
+        # restore those entries from D_direct. Only the values change; every
+        # one-hop pair is nonzero either way, so the reachability gate is
+        # untouched.
         self.D_direct = scenario.D
         self.D_hop = n_hop_distance(scenario.D, cfg.n_hop)
         self.C = scenario.B
+        direct = self.C == 1
+        self.D_hop[direct] = self.D_direct[direct]
         self.n_anchors = scenario.num_anchors
         self.N = scenario.n_nodes
         self.d = scenario.dim
@@ -162,22 +168,16 @@ class NBP:
             pool = np.empty((budget, self.d))
 
             for j, r in enumerate(senders):
-                # Deliberately the n-hop value, not D_direct, even though a
-                # sender always has a direct measurement.
+                # A sender is one-hop by construction, so this is that pair's
+                # own measurement: __init__ restores the direct reading over
+                # whatever the min-plus DP produced.
                 #
-                # For ~31% of one-hop pairs on `dense` a two-hop detour comes
-                # out shorter than the direct reading, and taking the min is
-                # measurably the better range estimate: MAE against the true
-                # distance is 1.164 vs 1.299 on exactly those pairs (0.703 vs
-                # 0.872 on `test`). Any detour sum is >= the true distance by
-                # the triangle inequality, so the min can only pull a reading
-                # that came in too long back toward truth -- a one-sided noise
-                # filter over independent paths.
-                #
-                # It buys that by adding downward bias (-0.65m vs -0.18m on
-                # dense), which is worth remembering when comparing against the
-                # CRLB, an unbiased-estimator bound. Substituting D_direct here
-                # was measured and is worse: dense best RMSE 2.808 vs 2.488.
+                # Letting the detour win was measured and is better on RMSE
+                # (dense best 2.488 vs 2.808) because the min is a one-sided
+                # noise filter -- any detour sum is >= the true distance -- but
+                # it substitutes a shortest path for a measurement and adds
+                # downward bias (-0.65m vs -0.18m on dense), which the CRLB, an
+                # unbiased-estimator bound, does not account for.
                 d_ru = self.D_hop[r, u]
                 sigma = self._sigma(d_ru)
                 particles_r = state.particles[r]
