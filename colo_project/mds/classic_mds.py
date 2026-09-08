@@ -32,14 +32,21 @@ class ClassicMDS:
     def register_anchors_rigid(
             self, X_hat: np.ndarray,
             anchors_true: np.ndarray) -> np.ndarray:
-        # least-squares Procrustes
+        # Least-squares Procrustes. Both sets must be centred on the anchor
+        # centroid *before* solving for the rotation: the optimal orthogonal
+        # map for uncentred coordinates is not the optimal one for centred
+        # coordinates, so rotating first and shifting afterwards leaves a
+        # residual. It cancels only when the two centroids already agree --
+        # double-centering puts the embedding's at the origin, so symmetric
+        # anchor layouts hide the bug and off-centre ones do not.
         from scipy.linalg import orthogonal_procrustes
         num_anchors = len(anchors_true)
-        A, s = orthogonal_procrustes(X_hat[:num_anchors], anchors_true)
-        X_reg = X_hat @ A
-        # translate so anchor centroids match
-        shift = anchors_true.mean(axis=0) - X_reg[:num_anchors].mean(axis=0)
-        self.x_hat_ab_rigid = X_reg + shift
+        c_hat = X_hat[:num_anchors].mean(axis=0)
+        c_true = anchors_true.mean(axis=0)
+        A, _ = orthogonal_procrustes(
+            X_hat[:num_anchors] - c_hat, anchors_true - c_true
+        )
+        self.x_hat_ab_rigid = (X_hat - c_hat) @ A + c_true
         return self.x_hat_ab_rigid
 
     def register_anchors_affine(
