@@ -111,3 +111,93 @@ is what the determinism work is for.
   may be for the (currently empty) `gnn/` stage rather than this one.
 - Is there any real RSS in the dataset, or is it fully simulated from the
   path-loss model?
+
+---
+
+## `relative_spread` bearing bandwidth — fix measured, then reverted
+
+`nbp/particles.py:relative_spread` replicates the bearing samples at `+/-2pi`
+before fitting `gaussian_kde`, so the wrap-around at `+/-pi` is not treated as a
+hard boundary. That works, but scipy sizes its bandwidth as *factor x the
+standard deviation of whatever it is handed*, and the replicas inflate that std
+from the bearing spread (~0.13 rad) to ~5.1 rad. The kernel is therefore ~29x
+wider than the data it is smoothing.
+
+Instrumented over 3892 real calls on `dense`, iterations 2-3:
+
+| quantity | median |
+|---|---|
+| belief bearing spread (circular std) | 0.131 rad (7.5 deg) |
+| Silverman bandwidth on the raw angles | 0.057 rad (3.3 deg) |
+| bandwidth as coded (replicated) | 1.664 rad (95.3 deg) |
+| inflation | **29.3x** |
+
+Bandwidth exceeds the bearing spread on 99.6% of calls, so the "bearing-aware"
+proposal is close to uniform over the circle — in a synthetic check 54% of
+proposed angles landed more than 45 deg off the true bearing. This costs
+sampling efficiency only, not correctness: `w_xy` is returned and divided out at
+`core.py:199`, so the target is still right.
+
+### What the fix did
+
+Sizing the kernel from the unreplicated angles and passing it back as a scalar
+factor reproduces scipy's Silverman bandwidth exactly, and the proposed bearing
+spread drops from 74 deg to 8.8 deg against a true 8.6 deg. Per-iteration RMSE,
+3 seeds:
+
+```
+dense_s0  before   8.34  4.02  3.23  2.84  2.81  2.93  3.07  3.03  3.18  3.15
+          after    8.34  4.25  3.18  2.77  2.69  2.62  2.55  2.53  2.50  2.49
+dense_s1  before   8.69  5.35  4.68  4.00  3.61  3.36  3.23  3.21  3.20  3.32
+          after    8.69  6.85  6.51  6.33  6.33  6.24  6.17  6.09  6.05  6.02
+dense_s2  before   8.85  5.55  4.70  3.98  3.45  3.34  3.27  3.31  3.32  3.32
+          after    8.85  6.69  6.08  5.92  5.86  5.78  5.72  5.64  5.60  5.56
+```
+
+Mean best RMSE on `dense` went 3.09 -> 4.69. `test` was a wash (best 34.38 ->
+34.45, final 35.26 -> 34.95), but that scenario fails outright at ~34 m on a
+100 m field, so it carries no signal either way.
+
+### Why it got worse — the finding worth keeping
+
+The oversmoothing is acting as **unintentional exploration**. Two effects, both
+visible above:
+
+- Mean belief spread on `dense` collapses from a flat ~1.55 to 0.20 and is still
+  shrinking at iteration 10. The clouds stop wasting particles on bearings the
+  belief rejects, and concentrate hard.
+- The drift documented in `CLAUDE.md` ("RMSE bottoms out around iteration 5 and
+  drifts up slightly afterwards") **disappears**: every curve is monotone
+  decreasing, and seed 0 reaches 2.487, better than its old best of 2.808 and
+  still descending.
+- But seeds 1 and 2 jump to a worse configuration at iteration 2 and never
+  recover, because spread is already 0.49 by iteration 3. The beliefs end
+  badly inconsistent: spread 0.20 against an actual error of 6.02.
+
+So the near-uniform proposal was rescuing bad early iterations by continually
+injecting particles in rejected directions — and was simultaneously what capped
+seed 0 at 2.81 and caused the late drift. Fixing the bandwidth buys efficiency
+and premature convergence in the same stroke.
+
+### To try, in order
+
+1. Keep the corrected bandwidth but reintroduce the smoothing **explicitly** as
+   an oversmoothing factor on the angle spread, then sweep it (1, 2, 4, 8, 16x
+   over 3 `dense` seeds). The optimum is somewhere between 1x (premature) and
+   29x (over-diffuse); seed 0's 2.487 says there is real headroom below the
+   current 3.09 baseline. No one can tune around a bug, which is the main
+   argument for doing this at all.
+2. Or leave the proposal at 1x and cure impoverishment at its source, with
+   roughening / jitter at the resample step in `_update_beliefs`. That is the
+   principled fix; the proposal width is a hack that happens to work.
+3. Unexplained and worth a second look: runtime on `dense` rose from a
+   consistent 64-67 s to 87-151 s after the fix (baseline re-timed afterwards to
+   rule out thermal effects). Bandwidth should not affect `gaussian_kde` cost.
+
+Related, and *not* a bug: pairing u's particle `i` with r's particle `i` in
+`relative_spread` looks like it asserts a correspondence between clouds, but the
+paired differences only ever reach a 1-D KDE, which uses the marginal. The two
+clouds are resampled through independent generators, so index `i` carries no
+cross-node meaning and any coupling gives the same fitted density — verified
+against a permuted coupling and against all `P^2` pairs. Using all pairs would
+only reduce the variance of the fit.
