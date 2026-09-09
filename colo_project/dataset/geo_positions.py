@@ -18,6 +18,11 @@ accepts:
 
 Anchors come first, as everywhere else in the project, so the loader also does
 the reordering.
+
+`geo_frame` returns the parameters of both conversions plus the reordering, so
+that `unproject` can map an *estimate* in scenario metres back to latitude and
+longitude. `load_geo_positions` is the thin generator-facing view of it; the
+two share one code path so the forward and inverse maps cannot drift apart.
 """
 
 import json
@@ -29,11 +34,15 @@ EARTH_R = 6371000.0
 
 
 def _project(lat, lon):
-    """Equirectangular metres about the centroid of the points themselves."""
+    """Equirectangular metres about the centroid of the points themselves.
+
+    Returns the reference latitude/longitude alongside, since inverting the
+    projection needs them and nothing else records them.
+    """
     lat0, lon0 = lat.mean(), lon.mean()
     x = np.radians(lon - lon0) * EARTH_R * np.cos(np.radians(lat0))
     y = np.radians(lat - lat0) * EARTH_R
-    return np.column_stack([x, y])
+    return np.column_stack([x, y]), float(lat0), float(lon0)
 
 
 def farthest_point_anchors(X, k):
@@ -56,6 +65,47 @@ def farthest_point_anchors(X, k):
     return np.array(chosen)
 
 
+def geo_frame(path: Path, num_anchors: int, pad: float = 0.05) -> dict:
+    """Load one capture-point dataset with everything needed to invert it.
+
+    Keys: `entries` (the raw JSON records, in file order), `X` (metres,
+    centred, anchors first), `meters`, `order` (scenario row -> source index),
+    `lat0`/`lon0` (projection reference) and `offset` (the bbox recentring
+    that was subtracted). Deterministic, so calling it later reproduces the
+    exact frame a scenario was generated in.
+    """
+    entries = json.loads(Path(path).read_text(encoding="utf-8"))
+    lat = np.array([e["latitude"] for e in entries], dtype=float)
+    lon = np.array([e["longitude"] for e in entries], dtype=float)
+    X, lat0, lon0 = _project(lat, lon)
+
+    # Recentre on the bounding box rather than the centroid: a path-shaped
+    # dataset has an off-centre centroid, which would waste half the field.
+    offset = (X.min(axis=0) + X.max(axis=0)) / 2.0
+    X = X - offset
+    meters = float((1.0 + pad) * np.ptp(X, axis=0).max())
+
+    anchors = farthest_point_anchors(X, num_anchors)
+    rest = np.setdiff1d(np.arange(len(X)), anchors)
+    order = np.concatenate([anchors, rest])
+    return {"entries": entries, "X": X[order], "meters": meters,
+            "order": order, "lat0": lat0, "lon0": lon0, "offset": offset}
+
+
+def unproject(X, frame: dict):
+    """Map `(n, 2)` scenario metres back to `(lat, lon)` degrees.
+
+    The exact inverse of `geo_frame`'s recentring and projection, so a true
+    position round-trips to the latitude and longitude it was read from, and
+    an *estimate* lands where the estimator put it on the map.
+    """
+    X = np.asarray(X, dtype=float) + frame["offset"]
+    lat = frame["lat0"] + np.degrees(X[:, 1] / EARTH_R)
+    lon = frame["lon0"] + np.degrees(
+        X[:, 0] / (EARTH_R * np.cos(np.radians(frame["lat0"]))))
+    return lat, lon
+
+
 def load_geo_positions(path: Path, num_anchors: int, pad: float = 0.05):
     """Load one capture-point dataset as `(X_true, meters, num_anchors)`.
 
@@ -63,16 +113,5 @@ def load_geo_positions(path: Path, num_anchors: int, pad: float = 0.05):
     side of the square field the caller must hand to `NBPConfig`, padded so
     that no node sits exactly on the bbox boundary.
     """
-    entries = json.loads(Path(path).read_text(encoding="utf-8"))
-    lat = np.array([e["latitude"] for e in entries], dtype=float)
-    lon = np.array([e["longitude"] for e in entries], dtype=float)
-    X = _project(lat, lon)
-
-    # Recentre on the bounding box rather than the centroid: a path-shaped
-    # dataset has an off-centre centroid, which would waste half the field.
-    X -= (X.min(axis=0) + X.max(axis=0)) / 2.0
-    meters = float((1.0 + pad) * np.ptp(X, axis=0).max())
-
-    anchors = farthest_point_anchors(X, num_anchors)
-    rest = np.setdiff1d(np.arange(len(X)), anchors)
-    return X[np.concatenate([anchors, rest])], meters, num_anchors
+    frame = geo_frame(path, num_anchors, pad)
+    return frame["X"], frame["meters"], num_anchors
