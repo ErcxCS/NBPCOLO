@@ -105,7 +105,11 @@ a CRLB of ~0.93).
 ## Module map (`colo_project/`)
 
 - `constants.py` — `ALPHA`, `D0`, and the `STREAM_*` RNG stream ids.
-- `dataset/` — `generate_dataset.py` (JSON → `.npz`), `data_loader.py` (`Scenario`, `load_or_generate`).
+- `dataset/` — `generate_dataset.py` (JSON → `.npz`), `data_loader.py` (`Scenario`, `load_or_generate`),
+  `geo_positions.py` (real capture points → metres). `geo_frame` returns the projection reference,
+  the recentring offset and the anchors-first `order` alongside the positions, so `unproject` can
+  invert it; `load_geo_positions` is a thin wrapper over it, one code path so forward and inverse
+  cannot drift apart.
 - `utils/graph_utils.py` — the forward measurement model and n-hop graph construction.
   `n_hop_distance` is a dense min-plus DP, O(N^3) per hop, and dominates runtime for large N.
 - `utils/metrics.py` — `euclidean_metrics`, `per_node_error`, `range_sigma`, anchored
@@ -119,7 +123,11 @@ a CRLB of ~0.93).
   substantially better than affine on these scenarios.
 - `nbp/` — `bbox.py`, `potentials.py` (both pure, no RNG), `particles.py` (all RNG), `core.py`
   (`NBP`, `NBPConfig`, `NBPState`, `NBPResult`).
-- `scripts/` — `run_mds.py`, `run_nbp.py`. `run_gnn.py` is an empty stub.
+- `scripts/` — `run_mds.py`, `run_nbp.py`, `export_geo.py` (a run's estimates → lat/lon, joined to the
+  source records). `export_geo` needs anchors and refuses without them: an anchor-free estimate has
+  no absolute frame to unproject through, and Procrustes-ing it onto the truth first would export
+  the answer. `run_mds.py` likewise requires anchors — `metrics.crlb` and the MDS registration both
+  do — so the `*_noanchor` scenarios are `run_nbp.py` only. `run_gnn.py` is an empty stub.
 
 ## NBP specifics
 
