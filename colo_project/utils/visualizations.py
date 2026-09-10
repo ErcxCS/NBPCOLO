@@ -100,14 +100,51 @@ def plot_results(X, X_hat, num_anchors: int,
     return fig
 
 
+def plot_raw_layouts(layouts, X_true, *, disparities=None, title=None):
+    """Several *unregistered* layouts against the truth, side by side.
+
+    `layouts` maps a label to an `(n, d)` estimate in its own frame -- no
+    Procrustes, no anchor registration, nothing moved. Each panel therefore
+    shows the gauge as well as the error, which is the whole point: an
+    anchor-free estimate can have the right shape while sitting in a frame
+    that shares nothing with the truth's, and a panel that had been aligned
+    first would hide exactly that.
+
+    No error lines and no anchor markers, unlike `plot_results` at its default
+    call: joining a node to its estimate across two unrelated frames draws the
+    frame offset, not the error, and at that point every line is the same line.
+
+    `disparities` maps the same labels to `metrics.procrustes_disparity` and
+    goes into each panel title -- the number that survives the frame
+    difference the panels are there to make visible.
+    """
+    labels = list(layouts)
+    fig, axes = plt.subplots(1, len(labels), figsize=(5.2 * len(labels), 5.2))
+    for ax, label in zip(np.atleast_1d(axes), labels):
+        sub = label
+        if disparities is not None:
+            sub = (f"{label}\n"
+                   f"Procrustes $M^2$ = {disparities[label]:.4f}")
+        plot_results(X_true, layouts[label], 0, ax=ax, title=sub)
+    if title:
+        fig.suptitle(title)
+    fig.tight_layout()
+    return fig
+
+
 def plot_convergence(curves, *, baselines=None, ax=None, title=None,
-                     xlabel="iteration", ylabel="error (m)"):
+                     xlabel="iteration", ylabel="error (m)", logy=False):
     """Per-iteration curves, plus flat reference lines.
 
     `curves` maps a label to an `(n_iter,)` array; `baselines` maps a label to
     a scalar drawn as an `axhline`. Replaces the separate legacy plotters for
     RMSE, Procrustes similarity and uncertainty, which were the same figure
     three times over.
+
+    `logy` is for curves that span orders of magnitude, which Procrustes
+    disparity does -- a failed run sits near 1 and a good one near 1e-3, and
+    on a linear axis the failure flattens everything worth comparing onto
+    zero. Off by default, so the metre-valued figures are unchanged.
     """
     fig, ax = _axes(ax, figsize=(7, 4.5))
     styles = ["o-", "s--", "^:", "d-."]
@@ -118,6 +155,8 @@ def plot_convergence(curves, *, baselines=None, ax=None, title=None,
     for (label, value), colour in zip((baselines or {}).items(),
                                       ["tab:orange", "tab:red", "tab:purple"]):
         ax.axhline(value, color=colour, ls="-.", label=label)
+    if logy:
+        ax.set_yscale("log")
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     _finish(ax, title)

@@ -163,6 +163,45 @@ def align_rigid(X_hat: np.ndarray, X_ref: np.ndarray) -> np.ndarray:
     return (X_hat - c_hat) @ A + c_ref
 
 
+def procrustes_disparity(X_hat: np.ndarray, X_ref: np.ndarray) -> float:
+    """Procrustes disparity `M^2` between an estimate and a reference.
+
+    `scipy.spatial.procrustes` centres both configurations, scales each to
+    unit Frobenius norm and rotates one onto the other, then returns the
+    residual sum of squares: `0` when the two shapes match exactly, `1` when
+    they have nothing in common. A mirror image scores `0`, as it does under
+    `rigid_transform` -- a range-only network and its reflection are
+    genuinely indistinguishable.
+
+    This removes *scale* on top of the rigid gauge, so it measures shape and
+    nothing else, and it is dimensionless: it cannot say whether a node is
+    2 m or 40 m out, and a layout that is uniformly 20% too large scores a
+    perfect 0 even though ranges fix the scale and that is a real error. It
+    is the right tool for comparing raw, unregistered layouts, which
+    `euclidean_metrics` cannot do at all; it is the wrong tool for anything
+    that has to be read against the CRLB. Report it beside a metre-valued
+    score, never instead of one.
+
+    Argument order matches `align_rigid`: estimate first, reference second.
+    The reference is what gets handed to scipy first, so every estimate is
+    scored against an identically normalised reference -- the disparity is
+    symmetric only to floating point, so the order is fixed here rather than
+    left to the caller.
+    """
+    from scipy.spatial import procrustes
+    return float(procrustes(X_ref, X_hat)[2])
+
+
+def procrustes_hist(estimates_hist, X_ref: np.ndarray) -> np.ndarray:
+    """`procrustes_disparity` per iteration, as an `(n_iter,)` array.
+
+    The per-iteration counterpart used to track shape convergence, which is
+    what the legacy prototype plotted as "Procrustes Similarity". Note that
+    lower is better, unlike the name.
+    """
+    return np.array([procrustes_disparity(e, X_ref) for e in estimates_hist])
+
+
 def jacobian(X_true: np.ndarray, edges, alpha=ALPHA, d0=D0):
     """
     X_true: (N, d) array of ground-truth positions

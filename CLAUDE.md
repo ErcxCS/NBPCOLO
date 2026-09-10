@@ -113,18 +113,23 @@ a CRLB of ~0.93).
 - `utils/graph_utils.py` — the forward measurement model and n-hop graph construction.
   `n_hop_distance` is a dense min-plus DP, O(N^3) per hop, and dominates runtime for large N.
 - `utils/metrics.py` — `euclidean_metrics`, `per_node_error`, `range_sigma`, anchored
-  `crlb`/`jacobian`/`per_node_peb`.
+  `crlb`/`jacobian`/`per_node_peb`, and `procrustes_disparity`/`procrustes_hist` (shape-only,
+  scale-blind, dimensionless — see below).
 - `utils/io.py` — `result_dir` (allocates `run_NNNN/`), `save_json`/`save_arrays`/`save_fig`,
   `git_sha` (resolved against this repo, not cwd).
 - `utils/visualizations.py` — `plot_network`, `plot_results`, `plot_convergence`, `plot_error_cdf`,
   `plot_error_vs_degree`, `plot_particles`, `plot_messages`, `plot_detection_model`,
-  `plot_rss_model`, and `scenario_figures` (the scenario-only set, as `{stem: fig}`).
+  `plot_rss_model`, `plot_raw_layouts` (unregistered layouts side by side) and
+  `scenario_figures` (the scenario-only set, as `{stem: fig}`). There is deliberately no
+  `plot_procrustes`: `plot_convergence` already takes a dict of curves plus flat baselines,
+  which is the same figure the legacy prototype drew three separate times.
 - `mds/classic_mds.py` — `run_mds` returns `(x_hat, affine, rigid)`; rigid (Procrustes) is
   substantially better than affine on these scenarios.
 - `nbp/` — `bbox.py`, `potentials.py` (both pure, no RNG), `particles.py` (all RNG), `core.py`
   (`NBP`, `NBPConfig`, `NBPState`, `NBPResult`).
-- `scripts/` — `run_mds.py`, `run_nbp.py`, `export_geo.py` (a run's estimates → lat/lon, joined to the
-  source records). `export_geo` needs anchors and refuses without them: an anchor-free estimate has
+- `scripts/` — `run_mds.py`, `run_nbp.py`, `compare_procrustes.py` (raw MDS vs cold NBP vs
+  warm-start NBP by Procrustes disparity; runs NBP twice, so ~2x the usual runtime),
+  `export_geo.py` (a run's estimates → lat/lon, joined to the source records). `export_geo` needs anchors and refuses without them: an anchor-free estimate has
   no absolute frame to unproject through, and Procrustes-ing it onto the truth first would export
   the answer. `run_mds.py` likewise requires anchors — `metrics.crlb` and the MDS registration both
   do — so the `*_noanchor` scenarios are `run_nbp.py` only. `run_gnn.py` is an empty stub.
@@ -160,6 +165,17 @@ position (zero initial spread, degenerate first KDE) and overwrote the anchor ro
 Never seed from a truth-aligned layout -- `run_nbp` captures `mds_seed` *before* it replaces
 `rigid` with the Procrustes-to-truth used for anchor-free scoring.
 
+`metrics.procrustes_disparity` is the one score that compares *raw, unregistered* layouts: it
+removes translation, rotation, reflection **and scale**, leaving shape agreement alone (`0` same
+shape, `1` nothing in common — lower is better, despite the legacy name "similarity"). Because it
+is scale-blind it cannot replace a metre-valued RMSE: ranges fix the scale here, so a uniformly
+inflated layout is a real error that disparity scores as perfect. Report the two together.
+`compare_procrustes.py` does, and the gap between them is informative — on `paris_noanchor` warm
+NBP beats the MDS layout it was seeded from on disparity (0.0013 vs 0.0073) while *losing* to it
+on aligned RMSE (10.56 m vs 10.16 m), because its shape is better but it sits 9% too large.
+Cold and anchor-free, disparity stays at 0.89-0.99: since scale is already divided out, that says
+the cold failure is not merely the extent collapse but a scrambled geometry.
+
 Anchor-free (`num_anchors == 0`) runs go through `metrics.crlb_anchor_free` and `align_rigid`
 rather than `crlb`: with no anchors the FIM is singular by exactly 3 (two translations plus
 rotation, written down analytically in `gauge_basis`), so the bound is taken on the orthogonal
@@ -176,8 +192,9 @@ ever matters. Any optimization must preserve the bitwise-identical trace at a fi
 
 `optimized_NBP.py` is the version the port came from; `NBP_iteration2` there is dead but is the
 better-documented reference. `_COLO.py` (2.9k lines) is its helper grab-bag. Capabilities
-deliberately **not** ported: the multi-config sweep runner (`run_experiment`), Procrustes
-similarity tracking, `error_vs_neighborhood`, and the weighted SMACOF / spectral-layout MDS
-baselines in `Test.py`. (`mds_init` *was* ported, as `NBPConfig.warm_start` — see above.) The
+deliberately **not** ported: the multi-config sweep runner (`run_experiment`),
+`error_vs_neighborhood`, and the weighted SMACOF / spectral-layout MDS baselines in `Test.py`.
+(`mds_init` *was* ported, as `NBPConfig.warm_start`; Procrustes similarity tracking *was* ported,
+as `metrics.procrustes_disparity` plus `scripts/compare_procrustes.py` — both above.) The
 legacy results dict reported `var(D_noisy - D_clean)` under the key `"CRLB"` — a ranging variance
 in m^2, plotted against a positioning RMSE in m. It is not a bound; use `metrics.crlb`.
