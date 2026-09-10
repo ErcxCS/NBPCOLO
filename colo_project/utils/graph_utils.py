@@ -225,3 +225,99 @@ def nth_hop_adjacency(D: np.ndarray, n_hops: int) -> np.ndarray:
     Dn = n_hop_distance(D, n_hops)
     Bn = Dn > 0
     return Bn.astype(int)
+
+
+def hops_to_complete(D: np.ndarray, max_hops: int = None) -> int:
+    """Fewest hops at which every pair of nodes is reachable.
+
+    This is the `n` that makes the n-hop matrix a *complete* distance matrix,
+    with no zero (unreachable) entries left off the diagonal -- the hop count
+    `ClassicMDS.run_mds` escalates to, since classic MDS needs a full matrix
+    and cannot work around holes.
+
+    Runs the same min-plus recurrence as `n_hop_distance` but carries the DP
+    forward instead of restarting it per hop, so finding `n` costs one pass
+    rather than the `O(n^2)` passes an escalating caller would spend.
+
+    Raises `ValueError` if the graph is disconnected, since then no hop count
+    completes the matrix and the honest answer is not a number.
+    """
+    W = D.astype(float)
+    W[W == 0] = np.inf
+    np.fill_diagonal(W, 0.0)
+    n = len(W)
+    max_hops = n - 1 if max_hops is None else max_hops
+
+    reach = W.copy()
+    frontier = W.copy()
+    for hop in range(1, max_hops + 1):
+        if hop > 1:
+            frontier = np.min(frontier[:, :, None] + W[None, :, :], axis=1)
+            reach = np.minimum(reach, frontier)
+        if np.isfinite(reach).all():
+            return hop
+    unreachable = int((~np.isfinite(reach)).sum())
+    raise ValueError(
+        f"graph is disconnected: {unreachable} ordered pairs are unreachable "
+        f"within {max_hops} hops, so no hop count completes the matrix")
+
+
+def compare_hop_distances(D: np.ndarray, full_D: np.ndarray, hops) -> list:
+    """Per-hop quality of the n-hop matrix against the true distances.
+
+    `n_hop` buys coverage and pays for it in accuracy, and this is the
+    measurement of that trade. Each entry reports, for one hop count:
+
+    `coverage`      fraction of off-diagonal pairs that have any value at all;
+    `bias_m`        mean signed error against `full_D`, over covered pairs.
+                    Two effects fight here and the number says which wins.
+                    Geometry pushes multi-hop distances *up*: a path through
+                    intermediate nodes is a polyline, never shorter than the
+                    straight line it spans. Noise pushes them *down*: the DP
+                    takes a minimum over many noisy path sums, and a minimum
+                    over noisy candidates preferentially selects the ones
+                    whose noise ran negative. On these datasets the selection
+                    effect wins and the n-hop matrix comes out systematically
+                    *short*, so do not assume the sign;
+    `rmse_m`/`mae_m`, `rel_bias`  the same error, squared / absolute /
+                    normalised by the true distance;
+    `new_bias_m`    bias restricted to pairs this hop *added* over the
+                    previous one, which is where the detour error actually
+                    lives -- pooled with the direct edges it is diluted;
+    `direct_replaced`  fraction of measured one-hop edges whose value the
+                    min-plus DP overwrote with a shorter detour. Noise alone
+                    makes a detour look shorter often enough to matter, which
+                    is why `NBP` keeps the direct range for one-hop pairs
+                    rather than taking `D_hop` at face value.
+
+    `hops` is any iterable of hop counts; pass `hops_to_complete(D)` as the
+    last one to see the fully-connected matrix. Pure measurement: no RNG, and
+    nothing here is fed back into an estimator.
+    """
+    off = ~np.eye(len(D), dtype=bool)
+    direct = (D != 0) & off
+    rows = []
+    prev_cov = None
+    for hop in hops:
+        Dn = n_hop_distance(D, hop)
+        cov = (Dn != 0) & off
+        err = Dn[cov] - full_D[cov]
+        row = {
+            "hop": int(hop),
+            "coverage": float(cov.sum() / off.sum()),
+            "n_pairs": int(cov.sum()),
+            "bias_m": float(err.mean()),
+            "mae_m": float(np.abs(err).mean()),
+            "rmse_m": float(np.sqrt((err ** 2).mean())),
+            "rel_bias": float((err / full_D[cov]).mean()),
+            "direct_replaced": float(
+                ((Dn != D) & direct).sum() / direct.sum()),
+        }
+        new = cov & ~prev_cov if prev_cov is not None else None
+        row["new_pairs"] = 0 if new is None else int(new.sum())
+        row["new_bias_m"] = (
+            None if new is None or not new.any()
+            else float((Dn[new] - full_D[new]).mean()))
+        rows.append(row)
+        prev_cov = cov
+    return rows

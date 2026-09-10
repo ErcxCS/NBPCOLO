@@ -112,6 +112,12 @@ a CRLB of ~0.93).
   cannot drift apart.
 - `utils/graph_utils.py` — the forward measurement model and n-hop graph construction.
   `n_hop_distance` is a dense min-plus DP, O(N^3) per hop, and dominates runtime for large N.
+  `hops_to_complete` finds the hop count at which every pair is reachable (8 on the real
+  datasets, despite mean degree > 20) and raises if the graph is disconnected;
+  `compare_hop_distances` scores the n-hop matrix against `full_D` per hop. The n-hop matrix
+  is biased *short*, not long: the DP takes a min over noisy path sums and so selects the
+  paths whose noise ran negative, which overwrites 28-37% of direct one-hop measurements
+  with a "shorter" detour. See `Report3.md`.
 - `utils/metrics.py` — `euclidean_metrics`, `per_node_error`, `range_sigma`, anchored
   `crlb`/`jacobian`/`per_node_peb`, and `procrustes_disparity`/`procrustes_hist` (shape-only,
   scale-blind, dimensionless — see below).
@@ -181,7 +187,11 @@ rather than `crlb`: with no anchors the FIM is singular by exactly 3 (two transl
 rotation, written down analytically in `gauge_basis`), so the bound is taken on the orthogonal
 complement of that nullspace, and error is scored after a free Procrustes as well as raw. Cold and
 anchor-free, NBP collapses to ~1/6 of the true extent on iteration 1 and does not recover; see
-`Report2.md` for why, and do not reach for a larger `n_hop` as the fix.
+`Report2.md` for why. Do not reach for a larger `n_hop` as the fix — but note it is not inert
+either: the collapsed extent is a function of `n_hop` (0.24 / 0.47 / 0.87 of the true extent at
+1 / 2 / 8 hops on `barcelona_noanchor`), and shape improves with it too. It is still ~80x worse
+than a warm start at 8 hops, for several times the runtime and 2.5x the distance error, so it
+mitigates rather than fixes. Measured in `Report3.md`.
 
 Known behaviour, not a bug: RMSE bottoms out around iteration 5 and drifts up slightly afterwards
 (particle depletion / overconfidence). Runtime is ~25-60s for N=100, P=125, 10 iterations; the hot
